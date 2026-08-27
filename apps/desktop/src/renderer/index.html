@@ -142,10 +142,16 @@
             </div>
           </section>
 
-          <section class="inspector-section plan-section">
-            <div class="section-heading"><span>Plan</span><span class="count-badge" id="todo-count">0</span></div>
-            <div class="empty-widget" id="plan-empty">No active plan</div>
-            <div class="todo-list" id="todo-list"></div>
+          <section class="inspector-section todo-section">
+            <div class="section-heading"><span>To do</span><span class="section-count" id="todo-count">0</span></div>
+            <div class="todo-list" id="todo-list">
+              <div class="todo-empty-row" id="todo-empty">No tasks yet</div>
+            </div>
+          </section>
+
+          <section class="inspector-section plan-section" id="plan-section" hidden>
+            <div class="section-heading"><span>Plan</span><span class="section-count" id="plan-count">0 phases</span></div>
+            <div class="phase-list" id="phase-list"></div>
           </section>
 
           <section class="inspector-section activity-section">

@@ -11,9 +11,10 @@ const elements = Object.fromEntries(
     "connection-status", "context-fill", "context-percent", "context-tokens", "context-window", "conversation",
     "docs-link", "extension-section", "extension-widgets", "fast-toggle", "launch-args", "message-input",
     "message-list", "modal-actions", "modal-backdrop", "modal-close", "modal-content", "modal-message", "modal-title",
-    "model-select", "new-chat", "open-command-palette", "open-workspace-folder", "palette-results", "plan-empty",
-    "queue-label", "runtime-label", "runtime-pill", "send-message", "show-commands", "thinking-select", "todo-count",
-    "todo-list", "toast-region", "welcome", "window-title", "workspace-name", "workspace-path",
+    "model-select", "new-chat", "open-command-palette", "open-workspace-folder", "palette-results", "phase-list",
+    "plan-count", "plan-section", "queue-label", "runtime-label", "runtime-pill", "send-message", "show-commands",
+    "thinking-select", "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title",
+    "workspace-name", "workspace-path",
   ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]),
 );
 
@@ -248,6 +249,7 @@ function toolFor(session, frame) {
       args: frame.args,
       intent: frame.intent || "",
       detail: summarize(frame.args, 700),
+      activityDetail: frame.intent || summarize(frame.args, 180),
       status: "running",
       startedAt: Date.now(),
       updatedAt: Date.now(),
@@ -343,7 +345,7 @@ function handleFrame(session, frame) {
       break;
     case "tool_execution_start": {
       const tool = toolFor(session, frame);
-      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.intent || tool.detail, status: "running" });
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.activityDetail, status: "running" });
       scheduleMessages(session);
       break;
     }
@@ -351,7 +353,7 @@ function handleFrame(session, frame) {
       const tool = toolFor(session, frame);
       tool.detail = summarize(frame.partialResult, 900) || tool.detail;
       tool.updatedAt = Date.now();
-      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.detail, status: "running" });
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.activityDetail, status: "running" });
       scheduleMessages(session);
       break;
     }
@@ -360,7 +362,7 @@ function handleFrame(session, frame) {
       tool.detail = summarize(frame.result, 1800) || tool.detail;
       tool.status = frame.isError ? "error" : "complete";
       tool.updatedAt = Date.now();
-      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.detail, status: tool.status });
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.activityDetail, status: tool.status });
       scheduleMessages(session);
       break;
     }
@@ -635,44 +637,74 @@ function renderModelSelect(session) {
 }
 
 function renderTodos(phases) {
-  const tasks = phases.flatMap((phase) => phase.tasks || []);
+  const populatedPhases = phases.filter((phase) => phase.tasks?.length);
+  const tasks = populatedPhases.flatMap((phase) => phase.tasks);
   elements.todo_count.textContent = String(tasks.length);
-  elements.plan_empty.hidden = tasks.length > 0;
+  elements.todo_empty.hidden = tasks.length > 0;
   elements.todo_list.replaceChildren();
-  for (const task of tasks) {
-    const item = document.createElement("div");
-    item.className = `todo-item ${task.status || "pending"}`;
-    const check = document.createElement("span");
-    check.className = "todo-check";
-    check.textContent = task.status === "completed" ? "✓" : task.status === "in_progress" ? "•" : "";
-    const text = document.createElement("span");
-    text.textContent = task.content;
-    item.append(check, text);
-    elements.todo_list.append(item);
+  if (!tasks.length) {
+    elements.todo_list.append(elements.todo_empty);
+  } else {
+    for (const task of tasks) {
+      const item = document.createElement("div");
+      item.className = `todo-item ${task.status || "pending"}`;
+      const check = document.createElement("span");
+      check.className = "todo-check";
+      check.textContent = task.status === "completed" ? "✓" : task.status === "in_progress" ? "•" : "";
+      const text = document.createElement("span");
+      text.textContent = task.content;
+      item.append(check, text);
+      elements.todo_list.append(item);
+    }
+  }
+
+  const hasPlan =
+    populatedPhases.length > 1 ||
+    populatedPhases.some((phase) => phase.name && !/^(todos?|to do)$/iu.test(phase.name.trim()));
+  elements.plan_section.hidden = !hasPlan;
+  elements.plan_count.textContent = `${populatedPhases.length} phase${populatedPhases.length === 1 ? "" : "s"}`;
+  elements.phase_list.replaceChildren();
+  if (hasPlan) {
+    for (const phase of populatedPhases) {
+      const completed = phase.tasks.filter((task) => task.status === "completed").length;
+      const row = document.createElement("div");
+      row.className = "phase-row";
+      const name = document.createElement("span");
+      name.textContent = phase.name || "Phase";
+      const progress = document.createElement("span");
+      progress.textContent = `${completed}/${phase.tasks.length}`;
+      row.append(name, progress);
+      elements.phase_list.append(row);
+    }
   }
 }
 
 function renderActivity(session) {
   if (!session || session.id !== activeSessionId) return;
-  const items = [...session.activities.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
+  const items = [...session.activities.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 7);
   elements.activity_empty.hidden = items.length > 0;
   elements.activity_list.replaceChildren();
   for (const activity of items) {
     const node = document.createElement("div");
-    node.className = "activity-item";
-    const head = document.createElement("div");
-    head.className = "activity-head";
+    node.className = `activity-item ${activity.status || ""}`;
     const icon = document.createElement("span");
     icon.className = "activity-icon";
     icon.textContent = activity.kind === "subagent" ? "◆" : activity.kind === "system" ? "◫" : "›";
+    const content = document.createElement("div");
+    content.className = "activity-copy";
+    const head = document.createElement("div");
+    head.className = "activity-head";
     const name = document.createElement("strong");
     name.textContent = activity.name;
     const status = document.createElement("span");
     status.textContent = activity.status;
-    head.append(icon, name, status);
+    head.append(name, status);
     const detail = document.createElement("p");
-    detail.textContent = activity.detail || "";
-    node.append(head, detail);
+    const fullDetail = stripAnsi(activity.detail || "").replace(/\s+/gu, " ").trim();
+    detail.textContent = fullDetail.length > 180 ? `${fullDetail.slice(0, 177)}…` : fullDetail;
+    detail.title = fullDetail;
+    content.append(head, detail);
+    node.append(icon, content);
     elements.activity_list.append(node);
   }
 }
