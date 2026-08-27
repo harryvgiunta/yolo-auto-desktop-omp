@@ -43,6 +43,7 @@
     "files": [
       "src/**/*",
       "assets/**/*",
+      "runtime-manifest.json",
       "package.json"
     ],
     "extraResources": [
