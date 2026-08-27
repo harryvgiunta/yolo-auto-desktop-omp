@@ -218,6 +218,10 @@ kbd { padding: 2px 4px; border: 1px solid #303a46; border-radius: 4px; backgroun
 .todo-item.completed { color: #4f5b68; text-decoration: line-through; }
 .todo-item.in_progress { color: #c0cad4; }
 .todo-item.in_progress .todo-check { border-color: var(--accent); background: rgb(199 243 106 / 10%); }
+.todo-item.blocked { color: var(--warning); }
+.todo-item.blocked .todo-check { border-color: color-mix(in srgb, var(--warning), transparent 35%); color: var(--warning); }
+.todo-item.abandoned { color: #5b6673; text-decoration: line-through; }
+.todo-item.abandoned .todo-check { color: #6b7683; }
 .plan-section[hidden] { display: none; }
 .phase-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #1b242e; color: #8996a5; font-size: 9px; }
 .phase-row span:first-child { overflow-wrap: anywhere; }

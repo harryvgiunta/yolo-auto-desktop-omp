@@ -293,6 +293,38 @@ async function refreshState(session) {
   }
 }
 
+function syncTodoPhases(session, result) {
+  const phases = result?.details?.phases || result?.details?.todoPhases;
+  if (
+    !Array.isArray(phases) ||
+    !phases.every(
+      (phase) =>
+        phase &&
+        typeof phase.name === "string" &&
+        Array.isArray(phase.tasks) &&
+        phase.tasks.every(
+          (task) =>
+            task &&
+            typeof task.content === "string" &&
+            ["pending", "in_progress", "completed", "abandoned", "blocked"].includes(task.status),
+        ),
+    )
+  ) {
+    return false;
+  }
+  const todoPhases = phases.map((phase) => ({
+    name: phase.name,
+    tasks: phase.tasks.map((task) => ({
+      content: task.content,
+      status: task.status,
+      ...(task.blocker ? { blocker: task.blocker } : {}),
+    })),
+  }));
+  session.state = { ...(session.state || {}), todoPhases };
+  renderState(session);
+  return true;
+}
+
 function handleFrame(session, frame) {
   if (!session) {
     return;
@@ -363,6 +395,10 @@ function handleFrame(session, frame) {
       tool.status = frame.isError ? "error" : "complete";
       tool.updatedAt = Date.now();
       updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.activityDetail, status: tool.status });
+      if (tool.name === "todo" && !frame.isError) {
+        syncTodoPhases(session, frame.result);
+        void refreshState(session);
+      }
       scheduleMessages(session);
       break;
     }
@@ -650,9 +686,18 @@ function renderTodos(phases) {
       item.className = `todo-item ${task.status || "pending"}`;
       const check = document.createElement("span");
       check.className = "todo-check";
-      check.textContent = task.status === "completed" ? "✓" : task.status === "in_progress" ? "•" : "";
+      check.textContent =
+        task.status === "completed"
+          ? "✓"
+          : task.status === "in_progress"
+            ? "•"
+            : task.status === "blocked"
+              ? "!"
+              : task.status === "abandoned"
+                ? "×"
+                : "";
       const text = document.createElement("span");
-      text.textContent = task.content;
+      text.textContent = task.blocker ? `${task.content} — ${task.blocker}` : task.content;
       item.append(check, text);
       elements.todo_list.append(item);
     }
