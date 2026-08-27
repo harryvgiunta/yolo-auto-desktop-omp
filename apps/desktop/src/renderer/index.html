@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YOLO Auto Desktop OMP</title>
+    <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">π</div>
+          <div class="brand-copy">
+            <strong>YOLO Auto</strong>
+            <span>OMP Desktop</span>
+          </div>
+        </div>
+        <div class="titlebar-center" id="window-title">Ready</div>
+        <div class="runtime-pill checking" id="runtime-pill">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="runtime-label">Checking OMP runtime</span>
+        </div>
+      </header>
+
+      <div class="workspace-layout">
+        <aside class="sidebar">
+          <section class="sidebar-section project-section">
+            <div class="section-heading">
+              <span>Workspace</span>
+              <button class="icon-button" id="open-workspace-folder" title="Open in file manager" aria-label="Open workspace in file manager">
+                ↗
+              </button>
+            </div>
+            <button class="workspace-card" id="choose-workspace">
+              <span class="folder-icon" aria-hidden="true"></span>
+              <span class="workspace-copy">
+                <strong id="workspace-name">Choose a project</strong>
+                <small id="workspace-path">OMP runs inside this folder</small>
+              </span>
+              <span class="chevron" aria-hidden="true">›</span>
+            </button>
+          </section>
+
+          <section class="sidebar-section launch-section">
+            <label for="launch-args">Launch arguments</label>
+            <input
+              id="launch-args"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="--model provider/model"
+            />
+            <p>Optional OMP CLI flags. Quotes are supported.</p>
+          </section>
+
+          <section class="sidebar-section sessions-section">
+            <div class="section-heading">
+              <span>Sessions</span>
+              <span class="session-count" id="session-count">0</span>
+            </div>
+            <div class="session-list" id="session-list" role="tablist" aria-label="OMP sessions"></div>
+            <button class="new-session-button" id="new-session">
+              <span aria-hidden="true">＋</span>
+              New OMP session
+              <kbd>Ctrl ⇧ N</kbd>
+            </button>
+          </section>
+
+          <div class="sidebar-footer">
+            <a href="https://github.com/can1357/oh-my-pi#readme" id="docs-link">OMP documentation</a>
+            <span>Full TUI · native PTY</span>
+          </div>
+        </aside>
+
+        <main class="main-panel">
+          <div class="terminal-toolbar">
+            <div class="terminal-identity">
+              <span class="terminal-symbol" aria-hidden="true">›_</span>
+              <div>
+                <strong id="active-title">OMP terminal</strong>
+                <span id="active-subtitle">No active session</span>
+              </div>
+            </div>
+            <div class="terminal-actions">
+              <button class="toolbar-button" id="copy-output" title="Copy selected terminal text">Copy</button>
+              <button class="toolbar-button" id="restart-session" title="Restart active OMP session">Restart</button>
+              <button class="toolbar-button danger" id="stop-session" title="Stop active OMP session">Stop</button>
+            </div>
+          </div>
+
+          <div class="terminal-viewport" id="terminal-viewport">
+            <div class="empty-state" id="empty-state">
+              <div class="empty-visual" aria-hidden="true">
+                <div class="orbit orbit-one"></div>
+                <div class="orbit orbit-two"></div>
+                <div class="pi-core">π</div>
+              </div>
+              <p class="eyebrow">Coding agent, desktop native</p>
+              <h1>The full OMP terminal.<br />One focused workspace.</h1>
+              <p class="empty-description">
+                Every OMP model, tool, slash command, session, subagent, LSP, debugger, and keyboard shortcut runs unchanged inside a native PTY.
+              </p>
+              <button class="primary-button" id="empty-start">
+                Start OMP
+                <span aria-hidden="true">→</span>
+              </button>
+              <div class="feature-row" aria-label="Capabilities">
+                <span>31 tools</span>
+                <span>60+ providers</span>
+                <span>Native sessions</span>
+              </div>
+            </div>
+            <div class="terminal-stack" id="terminal-stack"></div>
+          </div>
+
+          <footer class="statusbar">
+            <div class="status-message">
+              <span class="status-indicator" id="status-indicator"></span>
+              <span id="status-message">Select a workspace, then start OMP</span>
+            </div>
+            <div class="shortcut-hints">
+              <span><kbd>Ctrl ⇧ C</kbd> copy</span>
+              <span><kbd>Ctrl ⇧ V</kbd> paste</span>
+              <span><kbd>Ctrl C</kbd> interrupt</span>
+            </div>
+          </footer>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

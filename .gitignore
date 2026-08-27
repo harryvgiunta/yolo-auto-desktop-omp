@@ -15,6 +15,9 @@ target/
 /result
 /result-*
 
+
+# Desktop wrapper downloads verified OMP release binaries on demand
+/apps/desktop/runtime/
 # Environment
 .env
 

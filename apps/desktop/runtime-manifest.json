@@ -1,0 +1,26 @@
+{
+  "version": "18.0.8",
+  "repository": "can1357/oh-my-pi",
+  "targets": {
+    "darwin-arm64": {
+      "asset": "omp-darwin-arm64",
+      "sha256": "a56adc47f2f4f062441d3316622c3791e9fffc7c996854e4f59e43353bd91c7f"
+    },
+    "darwin-x64": {
+      "asset": "omp-darwin-x64",
+      "sha256": "02581f23ce4b7100606d839871b3f5019dd54423f3fecd0b1670d00a58395192"
+    },
+    "linux-arm64": {
+      "asset": "omp-linux-arm64",
+      "sha256": "916974fdd642d3cd294cb2c175d2066de4a19554c6164362023d8a96811c01f7"
+    },
+    "linux-x64": {
+      "asset": "omp-linux-x64",
+      "sha256": "b15c7162a3cc74898c2ace76524158a4a24e43f9d086501e7da71a9f3a185f80"
+    },
+    "win32-x64": {
+      "asset": "omp-windows-x64.exe",
+      "sha256": "8179affc9a12f7b0350d3350e17986f8b0950a18c57393b0626cd116e7d7da98"
+    }
+  }
+}

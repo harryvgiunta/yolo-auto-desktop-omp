@@ -32,6 +32,35 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
 > while we evaluate how open contributions go. Depending on the results, the
 > vouch system may return.
 
+## YOLO Auto Desktop OMP
+
+This fork adds a native Electron desktop shell in [`apps/desktop`](apps/desktop). It runs the official OMP binary inside a real PTY instead of reimplementing the agent, so the complete TUI remains available: every provider, model, tool, slash command, session, subagent, LSP operation, debugger operation, and keyboard shortcut.
+
+Desktop additions:
+
+- workspace picker and per-project launch arguments;
+- multiple concurrent OMP sessions with native terminal tabs;
+- restart, stop, copy, paste, resize, and process lifecycle handling;
+- sandboxed renderer with a narrow IPC preload bridge;
+- checksum-verified OMP runtimes for Windows, macOS, and Linux;
+- Electron Builder targets for installers and portable packages.
+
+```sh
+cd apps/desktop
+npm install
+npm start
+```
+
+`npm start` downloads the pinned OMP release for the current platform, verifies its SHA-256 digest, then launches the desktop app. Set `OMP_DESKTOP_RUNTIME` to an existing OMP executable to use a custom build.
+
+Build an unpacked desktop application:
+
+```sh
+npm run pack
+```
+
+The upstream CLI and package development instructions continue below.
+
 ## Install
 
 **macOS · Linux**

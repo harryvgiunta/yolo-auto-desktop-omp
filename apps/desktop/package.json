@@ -1,0 +1,98 @@
+{
+  "name": "@yolo-auto/omp-desktop",
+  "version": "0.1.0",
+  "description": "Native desktop shell for the full Oh My Pi coding-agent experience.",
+  "private": true,
+  "author": "harryvgiunta",
+  "main": "src/main.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "npm run runtime:prepare && electron .",
+    "start:without-download": "electron .",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "runtime:smoke": "node scripts/smoke-runtime.cjs",
+    "test": "node --test test/*.test.cjs",
+    "check": "npm test && npm run runtime:smoke",
+    "pack": "npm run runtime:prepare && electron-builder --dir",
+    "dist": "npm run runtime:prepare && electron-builder",
+    "dist:win": "npm run runtime:prepare -- --platform win32 --arch x64 && electron-builder --win",
+    "dist:mac": "npm run runtime:prepare -- --platform darwin && electron-builder --mac",
+    "dist:linux": "npm run runtime:prepare -- --platform linux && electron-builder --linux"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "ai.yoloauto.omp.desktop",
+    "productName": "YOLO Auto Desktop OMP",
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "licenses/oh-my-pi-LICENSE"
+      },
+      {
+        "from": "../../THIRD-PARTY-NOTICES.txt",
+        "to": "licenses/oh-my-pi-THIRD-PARTY-NOTICES.txt"
+      }
+    ],
+    "win": {
+      "icon": "assets/app-icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "yolo-auto-desktop-omp-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "icon": "assets/app-icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "yolo-auto-desktop-omp-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "assets/app-icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "artifactName": "yolo-auto-desktop-omp-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harryvgiunta/yolo-auto-desktop-omp.git"
+  }
+}
