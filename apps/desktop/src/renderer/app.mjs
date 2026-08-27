@@ -940,6 +940,25 @@ function closePalette() {
   elements.command_palette.hidden = true;
 }
 
+function dismissTopLayer() {
+  if (!elements.modal_backdrop.hidden) {
+    hideModal(true);
+    elements.message_input.focus();
+    return true;
+  }
+  if (!elements.command_palette.hidden) {
+    closePalette();
+    elements.message_input.focus();
+    return true;
+  }
+  if (document.activeElement?.matches("select")) {
+    document.activeElement.blur();
+    elements.message_input.focus();
+    return true;
+  }
+  return false;
+}
+
 function selectCommand(command) {
   closePalette();
   const slash = `/${command.name}`;
@@ -1272,13 +1291,25 @@ elements.message_input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); paletteSelection = Math.min(commands.length - 1, paletteSelection + 1); renderPalette(); return; }
     if (event.key === "ArrowUp") { event.preventDefault(); paletteSelection = Math.max(0, paletteSelection - 1); renderPalette(); return; }
     if (event.key === "Enter" && !event.shiftKey && commands[paletteSelection]) { event.preventDefault(); selectCommand(commands[paletteSelection]); return; }
-    if (event.key === "Escape") { event.preventDefault(); closePalette(); return; }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissTopLayer();
+      return;
+    }
   }
   if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
 });
 document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openPalette(); }
-  else if (event.key === "Escape" && elements.command_palette.hidden && elements.modal_backdrop.hidden) void abortGeneration();
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    openPalette();
+    return;
+  }
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  event.preventDefault();
+  if (dismissTopLayer()) return;
+  void abortGeneration();
 });
 document.addEventListener("click", (event) => {
   const starter = event.target.closest("[data-starter]");
