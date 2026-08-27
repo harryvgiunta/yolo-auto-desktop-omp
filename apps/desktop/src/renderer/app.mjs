@@ -117,6 +117,22 @@ function imageContent(content) {
     .map((item) => `data:${item.mimeType};base64,${item.data}`);
 }
 
+function toolCallsFromContent(content) {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((item) => item?.type === "toolCall" && typeof item.id === "string")
+    .map((item) => ({
+      id: item.id,
+      name: item.name || "tool",
+      args: item.arguments,
+      intent: item.intent || "",
+      detail: item.intent || summarize(item.arguments, 700),
+      status: "pending",
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    }));
+}
+
 function summarize(value, maximum = 1800) {
   let text;
   if (typeof value === "string") {
@@ -248,6 +264,7 @@ function addMessage(session, message) {
     pending: Boolean(message.pending),
     level: message.level || "info",
     tools: message.tools || [],
+    historicalTools: Boolean(message.historicalTools),
   };
   session.messages.push(normalized);
   scheduleMessages(session);
@@ -265,21 +282,119 @@ function assistantFromWire(message) {
     streaming: message?.stopReason === undefined,
   };
 }
-
 function appendHistory(session, wireMessages) {
   session.messages = [];
+  const toolsById = new Map();
+  let toolGroup = null;
+  const pushHistory = (message) => {
+    const item = {
+      id: crypto.randomUUID(),
+      role: message.role,
+      text: message.text || "",
+      thinking: message.thinking || "",
+      images: message.images || [],
+      model: message.model || "",
+      timestamp: message.timestamp || Date.now(),
+      streaming: false,
+      pending: false,
+      level: message.level || "info",
+      tools: message.tools || [],
+      historicalTools: Boolean(message.historicalTools),
+    };
+    session.messages.push(item);
+    return item;
+  };
+  const ensureToolGroup = (message) => {
+    if (!toolGroup) {
+      toolGroup = pushHistory({
+        role: "assistant",
+        model: message?.model,
+        timestamp: message?.timestamp,
+        tools: [],
+        historicalTools: true,
+      });
+    }
+    return toolGroup;
+  };
+
   for (const message of wireMessages || []) {
     if (message?.role === "user") {
-      session.messages.push({
-        id: crypto.randomUUID(), role: "user", text: textContent(message.content), images: imageContent(message.content),
-        timestamp: message.timestamp || Date.now(), streaming: false, pending: false, tools: [],
+      toolGroup = null;
+      pushHistory({
+        role: "user",
+        text: textContent(message.content),
+        images: imageContent(message.content),
+        timestamp: message.timestamp,
       });
-    } else if (message?.role === "assistant") {
-      session.messages.push({ id: crypto.randomUUID(), ...assistantFromWire(message), streaming: false, tools: [] });
-    } else if (message?.role === "toolResult" && message.isError) {
-      session.messages.push({
-        id: crypto.randomUUID(), role: "notice", text: `${message.toolName}: ${textContent(message.content)}`,
-        timestamp: message.timestamp || Date.now(), level: "error", streaming: false, tools: [],
+      continue;
+    }
+    if (message?.role === "assistant") {
+      const text = textContent(message.content);
+      const thinking = thinkingContent(message.content);
+      const calls = toolCallsFromContent(message.content);
+      if (calls.length && !text) {
+        const group = ensureToolGroup(message);
+        if (thinking && group.thinking.length < 8_000) {
+          group.thinking += `${group.thinking ? "\n\n" : ""}${thinking}`.slice(0, 8_000 - group.thinking.length);
+        }
+        for (const tool of calls) {
+          group.tools.push(tool);
+          toolsById.set(tool.id, tool);
+        }
+        continue;
+      }
+      toolGroup = null;
+      if (text || thinking || calls.length || message.errorMessage) {
+        const item = pushHistory({
+          role: "assistant",
+          text: text || message.errorMessage || "",
+          thinking,
+          model: message.model,
+          timestamp: message.timestamp,
+          tools: calls,
+          level: message.errorMessage ? "error" : "info",
+        });
+        for (const tool of item.tools) toolsById.set(tool.id, tool);
+      }
+      continue;
+    }
+    if (message?.role === "toolResult") {
+      let tool = toolsById.get(message.toolCallId);
+      if (!tool) {
+        const group = ensureToolGroup(message);
+        tool = {
+          id: message.toolCallId || crypto.randomUUID(),
+          name: message.toolName || "tool",
+          args: undefined,
+          intent: "",
+          detail: "",
+          status: "pending",
+          startedAt: message.timestamp || Date.now(),
+          updatedAt: message.timestamp || Date.now(),
+        };
+        group.tools.push(tool);
+        toolsById.set(tool.id, tool);
+      }
+      tool.detail = summarize(message, 2_400);
+      tool.status = message.isError ? "error" : "complete";
+      tool.updatedAt = message.timestamp || Date.now();
+      continue;
+    }
+    if (message?.role === "custom" && message.display !== false && message.content) {
+      toolGroup = null;
+      pushHistory({
+        role: "output",
+        text: stripAnsi(typeof message.content === "string" ? message.content : summarize(message.content)),
+        timestamp: message.timestamp,
+      });
+      continue;
+    }
+    if (message?.role === "developer" && message.userInitiated) {
+      toolGroup = null;
+      pushHistory({
+        role: "notice",
+        text: textContent(message.content),
+        timestamp: message.timestamp,
       });
     }
   }
@@ -617,7 +732,10 @@ function patchMessage(node, item) {
   const body = node.querySelector(".markdown");
   const metaTime = node.querySelector(".message-meta span");
   if (metaTime) metaTime.textContent = item.pending ? "Sending…" : formatTime(item.timestamp);
-  const key = `${item.text}\u0000${item.thinking}\u0000${item.images.join("\u0001")}\u0000${item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.detail}`).join("\u0001")}`;
+  const toolsKey = item.historicalTools
+    ? `${item.tools.length}:${item.tools.filter((tool) => tool.status === "error").length}`
+    : item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.detail}`).join("\u0001");
+  const key = `${item.text}\u0000${item.thinking}\u0000${item.images.join("\u0001")}\u0000${toolsKey}`;
   if (node.dataset.renderKey === key) {
     return;
   }
@@ -651,7 +769,7 @@ function patchMessage(node, item) {
   if (item.tools.length) {
     const list = document.createElement("div");
     list.className = "tool-list";
-    for (const tool of item.tools) {
+    const appendTool = (target, tool) => {
       const card = document.createElement("details");
       card.className = `tool-card ${tool.status}`;
       const head = document.createElement("summary");
@@ -668,7 +786,25 @@ function patchMessage(node, item) {
       detail.className = "tool-detail";
       detail.textContent = tool.detail || tool.intent || "";
       card.append(head, detail);
-      list.append(card);
+      target.append(card);
+    };
+    if (item.historicalTools && item.tools.length > 4) {
+      const group = document.createElement("details");
+      group.className = "history-tool-group";
+      const summary = document.createElement("summary");
+      const errors = item.tools.filter((tool) => tool.status === "error").length;
+      summary.textContent = `${item.tools.length} tool calls${errors ? ` · ${errors} failed` : ""}`;
+      const tools = document.createElement("div");
+      tools.className = "history-tool-list";
+      group.append(summary, tools);
+      group.addEventListener("toggle", () => {
+        if (!group.open || group.dataset.rendered) return;
+        group.dataset.rendered = "true";
+        for (const tool of item.tools) appendTool(tools, tool);
+      });
+      list.append(group);
+    } else {
+      for (const tool of item.tools) appendTool(list, tool);
     }
     content.append(list);
   }
