@@ -16,8 +16,9 @@ const elements = Object.fromEntries(
     "runtime-pill", "send-message", "settings-active-model", "settings-active-thinking", "settings-auto-compaction",
     "settings-backdrop", "settings-category", "settings-close", "settings-compact-now", "settings-count",
     "settings-fast-mode", "settings-follow-up", "settings-interrupt", "settings-new-chat", "settings-open-folder",
-    "settings-path", "settings-reload", "settings-search", "settings-steering", "show-commands", "thinking-select",
-    "throughput-value", "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title",
+    "settings-path", "settings-reload", "settings-search", "settings-steering", "session-age", "session-search",
+    "session-sort", "show-commands", "thinking-select", "throughput-value", "todo-count", "todo-empty",
+    "todo-list", "toast-region", "welcome", "window-title",
     "workspace-name", "workspace-path", "configuration-list",
   ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]),
 );
@@ -33,6 +34,8 @@ let activeModal = null;
 let nextChatNumber = 1;
 let savedSessions = [];
 let savedSessionsWorkspace = "";
+let sessionSearchTimer = null;
+let sessionSearchGeneration = 0;
 
 const MODEL_ROLES = [
   { id: "default", name: "Default", description: "Primary chat model" },
@@ -177,6 +180,32 @@ function normalizedSessionPath(value) {
   return String(value || "").replaceAll("\\", "/").toLowerCase();
 }
 
+function filteredSavedSessions() {
+  const now = Date.now();
+  const age = elements.session_age?.value || "all";
+  const cutoff =
+    age === "today"
+      ? new Date(new Date().setHours(0, 0, 0, 0)).getTime()
+      : age === "week"
+        ? now - 7 * 86_400_000
+        : age === "month"
+          ? now - 30 * 86_400_000
+          : 0;
+  const filtered = cutoff ? savedSessions.filter((session) => session.modifiedAt >= cutoff) : [...savedSessions];
+  const sort = elements.session_sort?.value || "recent";
+  filtered.sort((left, right) => {
+    if (sort === "oldest") return left.modifiedAt - right.modifiedAt;
+    if (sort === "largest") return right.size - left.size;
+    return right.modifiedAt - left.modifiedAt;
+  });
+  return filtered;
+}
+
+function scheduleSessionSearch() {
+  clearTimeout(sessionSearchTimer);
+  sessionSearchTimer = setTimeout(() => void refreshSavedSessions(), 250);
+}
+
 async function refreshSavedSessions() {
   if (!workspace) {
     savedSessions = [];
@@ -185,9 +214,12 @@ async function refreshSavedSessions() {
     return;
   }
   const requestedWorkspace = workspace;
+  const query = elements.session_search?.value.trim() || "";
+  const generation = ++sessionSearchGeneration;
+  elements.refresh_sessions?.classList.add("loading");
   try {
-    const listed = await bridge.listSessions(requestedWorkspace);
-    if (workspace !== requestedWorkspace) return;
+    const listed = await bridge.listSessions(requestedWorkspace, query);
+    if (workspace !== requestedWorkspace || generation !== sessionSearchGeneration) return;
     savedSessions = listed;
     savedSessionsWorkspace = requestedWorkspace;
     for (const session of sessions.values()) {
@@ -199,7 +231,9 @@ async function refreshSavedSessions() {
     renderChatList();
     updateChrome();
   } catch (error) {
-    toast(cleanError(error), "error");
+    if (generation === sessionSearchGeneration) toast(cleanError(error), "error");
+  } finally {
+    if (generation === sessionSearchGeneration) elements.refresh_sessions?.classList.remove("loading");
   }
 }
 
@@ -209,6 +243,7 @@ function setWorkspace(directory) {
     configuration = null;
     savedSessions = [];
     savedSessionsWorkspace = "";
+    if (elements.session_search) elements.session_search.value = "";
   }
   workspace = directory;
   if (directory) {
@@ -897,9 +932,11 @@ function renderChatList() {
   const openPaths = new Set(
     [...sessions.values()].map((session) => normalizedSessionPath(session.state?.sessionFile)).filter(Boolean),
   );
-  const closedSaved = savedSessions.filter((saved) => !openPaths.has(normalizedSessionPath(saved.path)));
+  const closedSaved = filteredSavedSessions().filter(
+    (saved) => !openPaths.has(normalizedSessionPath(saved.path)),
+  );
   if (closedSaved.length) appendHeading("Saved", closedSaved.length);
-  for (const saved of closedSaved.slice(0, 7)) {
+  for (const saved of closedSaved.slice(0, 5)) {
     const tab = document.createElement("div");
     tab.className = "chat-tab saved";
     tab.tabIndex = 0;
@@ -927,10 +964,16 @@ function renderChatList() {
     });
     elements.chat_list.append(tab);
   }
-  if (closedSaved.length > 7) {
+  if (!closedSaved.length && (elements.session_search.value.trim() || elements.session_age.value !== "all")) {
+    const empty = document.createElement("div");
+    empty.className = "session-search-empty";
+    empty.textContent = "No saved chats match these filters.";
+    elements.chat_list.append(empty);
+  }
+  if (closedSaved.length > 5) {
     const more = document.createElement("button");
     more.className = "more-sessions";
-    more.textContent = `Open another saved session · ${closedSaved.length - 7} more`;
+    more.textContent = `Open another saved session · ${closedSaved.length - 5} more`;
     more.addEventListener("click", () => void resumeSession());
     elements.chat_list.append(more);
   }
@@ -2011,6 +2054,11 @@ elements.open_workspace_folder.addEventListener("click", () => {
 });
 elements.new_chat.addEventListener("click", () => void startChat());
 elements.refresh_sessions.addEventListener("click", () => void refreshSavedSessions());
+elements.session_search.addEventListener("input", scheduleSessionSearch);
+elements.session_search.addEventListener("search", scheduleSessionSearch);
+elements.session_search.addEventListener("change", scheduleSessionSearch);
+elements.session_age.addEventListener("change", renderChatList);
+elements.session_sort.addEventListener("change", renderChatList);
 elements.open_command_palette.addEventListener("click", openPalette);
 elements.show_commands.addEventListener("click", openPalette);
 elements.attach_image.addEventListener("click", () => void attachImage());

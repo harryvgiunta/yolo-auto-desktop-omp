@@ -52,6 +52,12 @@ button:disabled { cursor: default; opacity: .4; }
 .explorer-controls { display: flex; align-items: center; gap: 7px; }
 .explorer-controls button { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: #687584; font-size: 13px; cursor: pointer; }
 .explorer-controls button:hover { color: var(--accent); }
+.explorer-controls button.loading { color: var(--accent); animation: pulse .7s ease-in-out infinite; }
+.session-filterbar { display: grid; gap: 6px; margin-bottom: 5px; }
+.session-filterbar > input, .session-filterbar select { width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid #27323e; border-radius: 4px; outline: 0; background: #090d12; color: #aeb9c5; font-size: 9px; }
+.session-filterbar > input:focus, .session-filterbar select:focus { border-color: rgb(199 243 106 / 36%); }
+.session-filterbar > input::placeholder { color: #4e5a67; }
+.session-filterbar > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .icon-button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--subtle); cursor: pointer; }
 .icon-button:hover:not(:disabled) { background: var(--soft); color: var(--text); }
 .workspace-card { display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; gap: 9px; align-items: center; width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: linear-gradient(135deg, #121820, #10151c); text-align: left; cursor: pointer; transition: 140ms ease; }
@@ -98,6 +104,7 @@ kbd { padding: 2px 4px; border: 1px solid #303a46; border-radius: 4px; backgroun
 .chat-tab.saved:hover .saved-open-icon { color: var(--cyan); }
 .more-sessions { width: 100%; padding: 9px 4px; border: 0; border-bottom: 1px solid #1d2630; background: transparent; color: #687584; font-size: 8px; text-align: left; cursor: pointer; }
 .more-sessions:hover { color: var(--accent); }
+.session-search-empty { padding: 15px 4px; color: #586574; font-size: 9px; line-height: 1.5; text-align: left; }
 .sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; border-top: 1px solid #1c242e; color: #485361; font-size: 9px; }
 .sidebar-footer a { color: #718092; text-decoration: none; }
 .sidebar-footer a:hover { color: var(--accent); }

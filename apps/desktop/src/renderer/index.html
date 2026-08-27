@@ -55,6 +55,22 @@
               <span>Chat explorer</span>
               <span class="explorer-controls"><button id="refresh-sessions" title="Refresh saved sessions" aria-label="Refresh saved sessions">↻</button><span class="count-badge" id="chat-count">0</span></span>
             </div>
+            <div class="session-filterbar">
+              <input id="session-search" type="search" placeholder="Search saved chats…" aria-label="Search saved chats" />
+              <div>
+                <select id="session-age" aria-label="Filter sessions by age">
+                  <option value="all">Any time</option>
+                  <option value="today">Today</option>
+                  <option value="week">Past 7 days</option>
+                  <option value="month">Past 30 days</option>
+                </select>
+                <select id="session-sort" aria-label="Sort saved sessions">
+                  <option value="recent">Newest</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="largest">Largest</option>
+                </select>
+              </div>
+            </div>
             <div class="chat-list" id="chat-list" role="tablist" aria-label="OMP chats"></div>
           </section>
 

@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld("ompDesktop", {
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   openWorkspace: (directory) => ipcRenderer.invoke("workspace:open", directory),
   chooseSession: () => ipcRenderer.invoke("session:choose"),
-  listSessions: (cwd) => ipcRenderer.invoke("session:list", cwd),
+  listSessions: (cwd, query) => ipcRenderer.invoke("session:list", { cwd, query }),
   chooseAttachment: () => ipcRenderer.invoke("attachment:choose"),
   loadConfiguration: (cwd) => ipcRenderer.invoke("configuration:list", cwd),
   setConfiguration: (cwd, key, value) => ipcRenderer.invoke("configuration:set", { cwd, key, value }),

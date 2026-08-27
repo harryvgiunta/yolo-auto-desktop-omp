@@ -2,6 +2,7 @@ const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
+const readline = require("node:readline");
 const path = require("node:path");
 const {
   app,
@@ -59,6 +60,7 @@ const RPC_COMMANDS = new Set([
   "steer",
   "switch_session",
 ]);
+const sessionSearchCache = new Map();
 const sessions = new Map();
 let mainWindow = null;
 
@@ -159,7 +161,62 @@ function cleanSessionLabel(value) {
   return value.split(/\r?\n/u, 1)[0].replace(/[\u0000-\u001f\u007f]/gu, "").trim().slice(0, 160);
 }
 
-async function scanSavedSession(filePath, workspace) {
+async function sessionSearchText(filePath, stats) {
+  const cached = sessionSearchCache.get(filePath);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return cached.text;
+  }
+  const parts = [];
+  let characters = 0;
+  const lines = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of lines) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    let text = "";
+    if ((entry?.type === "title" || entry?.type === "title_change") && typeof entry.title === "string") {
+      text = entry.title;
+    } else if (entry?.type === "session" && typeof entry.title === "string") {
+      text = entry.title;
+    } else if (
+      entry?.type === "message" &&
+      ["user", "assistant", "developer"].includes(entry.message?.role)
+    ) {
+      text = sessionText(entry.message.content);
+    } else if (entry?.type === "custom" && entry.display !== false && typeof entry.content === "string") {
+      text = entry.content;
+    }
+    if (!text) continue;
+    const normalized = text.toLowerCase();
+    parts.push(normalized);
+    characters += normalized.length;
+    if (characters >= 2_000_000) break;
+  }
+  const text = parts.join("\n");
+  sessionSearchCache.set(filePath, { mtimeMs: stats.mtimeMs, size: stats.size, text });
+  if (sessionSearchCache.size > 256) {
+    sessionSearchCache.delete(sessionSearchCache.keys().next().value);
+  }
+  return text;
+}
+
+function sessionSearchTokens(query) {
+  if (typeof query !== "string") return [];
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+async function scanSavedSession(filePath, workspace, searchTokens) {
   let handle;
   try {
     const stats = await fs.promises.stat(filePath);
@@ -198,6 +255,10 @@ async function scanSavedSession(filePath, workspace) {
     if (!header || typeof header.cwd !== "string") return null;
     const recordedWorkspace = path.resolve(header.cwd).toLowerCase();
     if (recordedWorkspace !== path.resolve(workspace).toLowerCase()) return null;
+    if (searchTokens.length) {
+      const searchable = await sessionSearchText(filePath, stats);
+      if (!searchTokens.every((token) => searchable.includes(token))) return null;
+    }
     const created = Date.parse(header.timestamp || "");
     return {
       path: filePath,
@@ -221,8 +282,9 @@ async function scanSavedSession(filePath, workspace) {
   }
 }
 
-async function listSavedSessions(candidate) {
+async function listSavedSessions(candidate, query) {
   const workspace = workspaceDirectory(candidate);
+  const searchTokens = sessionSearchTokens(query);
   const agentDirectory = process.env.PI_CODING_AGENT_DIR
     ? path.resolve(process.env.PI_CODING_AGENT_DIR)
     : path.join(os.homedir(), ".omp", "agent");
@@ -256,7 +318,9 @@ async function listSavedSessions(candidate) {
   }
   const sessionsFound = [];
   for (let index = 0; index < files.length; index += 16) {
-    const batch = await Promise.all(files.slice(index, index + 16).map((file) => scanSavedSession(file, workspace)));
+    const batch = await Promise.all(
+      files.slice(index, index + 16).map((file) => scanSavedSession(file, workspace, searchTokens)),
+    );
     sessionsFound.push(...batch.filter(Boolean));
   }
   return sessionsFound.sort((left, right) => right.modifiedAt - left.modifiedAt).slice(0, 100);
@@ -498,7 +562,7 @@ function registerIpc() {
     }
     return true;
   });
-  ipcMain.handle("session:list", (_event, cwd) => listSavedSessions(cwd));
+  ipcMain.handle("session:list", (_event, payload) => listSavedSessions(payload?.cwd, payload?.query));
   ipcMain.handle("session:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Resume an OMP session",
