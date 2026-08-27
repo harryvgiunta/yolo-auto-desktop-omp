@@ -47,6 +47,7 @@
           <div class="primary-actions">
             <button class="new-chat-button" id="new-chat"><span>＋</span> New chat <kbd>Ctrl N</kbd></button>
             <button class="command-button" id="open-command-palette"><span>⌘</span> Commands <kbd>Ctrl K</kbd></button>
+            <button class="settings-sidebar-button" id="open-settings-sidebar"><span aria-hidden="true">⚙</span> Settings <kbd>Ctrl ,</kbd></button>
           </div>
 
           <section class="sidebar-section chats-section">
@@ -54,10 +55,6 @@
             <div class="chat-list" id="chat-list" role="tablist" aria-label="OMP chats"></div>
           </section>
 
-          <section class="sidebar-section launch-section">
-            <label for="launch-args">OMP launch flags</label>
-            <input id="launch-args" type="text" autocomplete="off" spellcheck="false" placeholder="--model provider/model" />
-          </section>
 
           <div class="sidebar-footer">
             <a href="https://github.com/can1357/oh-my-pi#readme" id="docs-link">OMP documentation</a>
@@ -70,21 +67,6 @@
             <div class="chat-identity">
               <span class="agent-avatar">π</span>
               <div><strong id="active-title">OMP</strong><span id="active-subtitle">Start a chat to connect</span></div>
-            </div>
-            <div class="model-controls">
-              <label class="control-select model-select-wrap">
-                <span>Model</span>
-                <select id="model-select" disabled><option>Loading…</option></select>
-              </label>
-              <label class="control-select thinking-select-wrap">
-                <span>Thinking</span>
-                <select id="thinking-select" disabled>
-                  <option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option>
-                </select>
-              </label>
-              <button class="fast-toggle" id="fast-toggle" disabled><span class="toggle-dot"></span> Fast</button>
-              <button class="settings-trigger" id="open-settings" title="Open settings">Settings</button>
-              <button class="stop-button" id="abort-generation" disabled>Stop</button>
             </div>
           </div>
 
@@ -105,6 +87,20 @@
           </div>
 
           <div class="composer-shell">
+            <div class="bottom-controls">
+              <label class="control-select model-select-wrap">
+                <span>Model</span>
+                <select id="model-select" disabled><option>Loading…</option></select>
+              </label>
+              <label class="control-select thinking-select-wrap">
+                <span>Thinking</span>
+                <select id="thinking-select" disabled>
+                  <option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option>
+                </select>
+              </label>
+              <button class="fast-toggle" id="fast-toggle" disabled><span class="toggle-dot"></span> Fast</button>
+              <button class="settings-trigger" id="open-settings" title="Open OMP settings" aria-label="Open OMP settings"><span aria-hidden="true">⚙</span><strong>Settings</strong></button>
+            </div>
             <div class="attachment-list" id="attachment-list"></div>
             <div class="command-palette" id="command-palette" hidden>
               <div class="palette-header"><span>OMP commands</span><small>Type to filter · Enter to select</small></div>
@@ -117,7 +113,11 @@
                   <button class="composer-icon" id="attach-image" title="Attach image" aria-label="Attach image">＋</button>
                   <button class="slash-button" id="show-commands" title="Show slash commands">/</button>
                 </div>
-                <div class="send-meta"><span id="queue-label"></span><button class="send-button" id="send-message" disabled aria-label="Send message">↑</button></div>
+                <div class="send-meta">
+                  <span id="queue-label"></span>
+                  <button class="stop-generation-button" id="abort-generation" disabled><span aria-hidden="true">■</span> Stop</button>
+                  <button class="send-button" id="send-message" disabled aria-label="Send message">↑</button>
+                </div>
               </div>
             </div>
             <div class="composer-footer"><span id="connection-status"><i></i> Not connected</span><span><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line · <kbd>Esc</kbd> stop</span></div>
@@ -135,17 +135,6 @@
             </div>
           </section>
 
-          <section class="inspector-section quick-section">
-            <div class="section-heading"><span>Quick actions</span></div>
-            <div class="quick-grid">
-              <button data-action="resume"><span>↺</span><strong>Resume</strong></button>
-              <button data-action="compact"><span>◫</span><strong>Compact</strong></button>
-              <button data-command="/review"><span>✓</span><strong>Review</strong></button>
-              <button data-command="/tools"><span>⌁</span><strong>Tools</strong></button>
-              <button data-command="/usage"><span>◔</span><strong>Usage</strong></button>
-              <button data-command="/mcp"><span>⚙</span><strong>MCP</strong></button>
-            </div>
-          </section>
 
           <section class="inspector-section todo-section">
             <div class="section-heading"><span>To do</span><span class="section-count" id="todo-count">0</span></div>
@@ -168,6 +157,17 @@
           <section class="inspector-section extension-section" id="extension-section" hidden>
             <div class="section-heading"><span>Extension widgets</span></div>
             <div id="extension-widgets"></div>
+          </section>
+          <section class="inspector-section quick-section">
+            <div class="section-heading"><span>Quick actions</span></div>
+            <div class="quick-grid">
+              <button data-action="resume"><span>↺</span><strong>Resume</strong></button>
+              <button data-action="compact"><span>◫</span><strong>Compact</strong></button>
+              <button data-command="/review"><span>✓</span><strong>Review</strong></button>
+              <button data-command="/tools"><span>⌁</span><strong>Tools</strong></button>
+              <button data-command="/usage"><span>◔</span><strong>Usage</strong></button>
+              <button data-command="/mcp"><span>⚙</span><strong>MCP</strong></button>
+            </div>
           </section>
         </aside>
       </div>

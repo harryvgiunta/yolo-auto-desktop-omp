@@ -9,9 +9,9 @@ const elements = Object.fromEntries(
     "abort-generation", "active-subtitle", "active-title", "activity-empty", "activity-list", "activity-live",
     "attach-image", "attachment-list", "chat-count", "chat-list", "choose-workspace", "command-palette",
     "connection-status", "context-fill", "context-percent", "context-tokens", "context-window", "conversation",
-    "docs-link", "extension-section", "extension-widgets", "fast-toggle", "launch-args", "message-input",
+    "docs-link", "extension-section", "extension-widgets", "fast-toggle", "message-input",
     "message-list", "modal-actions", "modal-backdrop", "modal-close", "modal-content", "modal-message", "modal-title",
-    "model-select", "new-chat", "open-command-palette", "open-settings", "open-workspace-folder", "palette-results",
+    "model-select", "new-chat", "open-command-palette", "open-settings", "open-settings-sidebar", "open-workspace-folder", "palette-results",
     "phase-list", "plan-count", "plan-section", "queue-label", "role-model-list", "roles-reset", "runtime-label",
     "runtime-pill", "send-message", "settings-active-model", "settings-active-thinking", "settings-auto-compaction",
     "settings-backdrop", "settings-category", "settings-close", "settings-compact-now", "settings-count",
@@ -885,7 +885,7 @@ async function startChat({ initialMessage } = {}) {
     return null;
   }
   const id = crypto.randomUUID();
-  const args = elements.launch_args.value.trim();
+  const args = "";
   const session = createSession(id, workspace, args);
   setActiveSession(id);
   renderChatList();
@@ -1719,7 +1719,6 @@ async function initialize() {
     try { workspace = await bridge.initialWorkspace(); } catch { workspace = ""; }
   }
   setWorkspace(workspace);
-  elements.launch_args.value = localStorage.getItem("ompDesktop.launchArgs") || "";
   updateChrome();
   if (runtimeAvailable && workspace) void startChat();
 }
@@ -1738,6 +1737,7 @@ elements.model_select.addEventListener("change", () => void setModel());
 elements.thinking_select.addEventListener("change", () => void setThinking());
 elements.fast_toggle.addEventListener("click", () => void toggleFast());
 elements.open_settings.addEventListener("click", () => void openSettings());
+elements.open_settings_sidebar.addEventListener("click", () => void openSettings());
 elements.settings_close.addEventListener("click", closeSettings);
 elements.settings_backdrop.addEventListener("click", (event) => {
   if (event.target === elements.settings_backdrop) closeSettings();
@@ -1787,9 +1787,6 @@ elements.settings_compact_now.addEventListener("click", () => void compactContex
 elements.settings_new_chat.addEventListener("click", () => {
   closeSettings();
   void startChat();
-});
-elements.launch_args.addEventListener("change", () => {
-  localStorage.setItem("ompDesktop.launchArgs", elements.launch_args.value.trim());
 });
 elements.docs_link.addEventListener("click", (event) => {
   event.preventDefault();
