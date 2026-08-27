@@ -1,6 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const {
   app,
@@ -142,6 +143,123 @@ function workspaceDirectory(candidate) {
     throw new Error("The selected workspace is not a directory.");
   }
   return directory;
+}
+
+function sessionText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
+}
+
+function cleanSessionLabel(value) {
+  if (typeof value !== "string") return "";
+  return value.split(/\r?\n/u, 1)[0].replace(/[\u0000-\u001f\u007f]/gu, "").trim().slice(0, 160);
+}
+
+async function scanSavedSession(filePath, workspace) {
+  let handle;
+  try {
+    const stats = await fs.promises.stat(filePath);
+    handle = await fs.promises.open(filePath, "r");
+    const buffer = Buffer.allocUnsafe(Math.min(65_536, Math.max(1, stats.size)));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/u);
+    let title = "";
+    let header = null;
+    let firstMessage = "";
+    let messageCount = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry?.type === "title" && typeof entry.title === "string") {
+        title = cleanSessionLabel(entry.title);
+        continue;
+      }
+      if (entry?.type === "session" && typeof entry.id === "string") {
+        header = entry;
+        if (!title) title = cleanSessionLabel(entry.title);
+        continue;
+      }
+      if (entry?.type === "message" && entry.message) {
+        messageCount += 1;
+        if (!firstMessage && entry.message.role === "user") {
+          firstMessage = cleanSessionLabel(sessionText(entry.message.content));
+        }
+      }
+    }
+    if (!header || typeof header.cwd !== "string") return null;
+    const recordedWorkspace = path.resolve(header.cwd).toLowerCase();
+    if (recordedWorkspace !== path.resolve(workspace).toLowerCase()) return null;
+    const created = Date.parse(header.timestamp || "");
+    return {
+      path: filePath,
+      id: header.id,
+      cwd: header.cwd,
+      title,
+      firstMessage,
+      name:
+        title ||
+        firstMessage ||
+        `Untitled · ${new Date(Number.isFinite(created) ? created : stats.mtimeMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      createdAt: Number.isFinite(created) ? created : stats.birthtimeMs,
+      modifiedAt: stats.mtimeMs,
+      messageCount,
+      size: stats.size,
+    };
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function listSavedSessions(candidate) {
+  const workspace = workspaceDirectory(candidate);
+  const agentDirectory = process.env.PI_CODING_AGENT_DIR
+    ? path.resolve(process.env.PI_CODING_AGENT_DIR)
+    : path.join(os.homedir(), ".omp", "agent");
+  const root = path.join(agentDirectory, "sessions");
+  let projectEntries;
+  try {
+    projectEntries = await fs.promises.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  const files = [];
+  for (const entry of projectEntries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(entryPath);
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    let children;
+    try {
+      children = await fs.promises.readdir(entryPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children) {
+      if (child.isFile() && child.name.endsWith(".jsonl")) {
+        files.push(path.join(entryPath, child.name));
+      }
+    }
+  }
+  const sessionsFound = [];
+  for (let index = 0; index < files.length; index += 16) {
+    const batch = await Promise.all(files.slice(index, index + 16).map((file) => scanSavedSession(file, workspace)));
+    sessionsFound.push(...batch.filter(Boolean));
+  }
+  return sessionsFound.sort((left, right) => right.modifiedAt - left.modifiedAt).slice(0, 100);
 }
 
 function launchArguments(value) {
@@ -380,6 +498,7 @@ function registerIpc() {
     }
     return true;
   });
+  ipcMain.handle("session:list", (_event, cwd) => listSavedSessions(cwd));
   ipcMain.handle("session:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Resume an OMP session",

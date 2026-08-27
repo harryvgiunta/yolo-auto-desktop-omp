@@ -12,7 +12,7 @@ const elements = Object.fromEntries(
     "docs-link", "extension-section", "extension-widgets", "fast-toggle", "message-input",
     "message-list", "modal-actions", "modal-backdrop", "modal-close", "modal-content", "modal-message", "modal-title",
     "model-select", "new-chat", "open-command-palette", "open-settings", "open-settings-sidebar", "open-workspace-folder", "palette-results",
-    "phase-list", "plan-count", "plan-section", "queue-label", "role-model-list", "roles-reset", "runtime-label",
+    "phase-list", "plan-count", "plan-section", "queue-label", "refresh-sessions", "role-model-list", "roles-reset", "runtime-label",
     "runtime-pill", "send-message", "settings-active-model", "settings-active-thinking", "settings-auto-compaction",
     "settings-backdrop", "settings-category", "settings-close", "settings-compact-now", "settings-count",
     "settings-fast-mode", "settings-follow-up", "settings-interrupt", "settings-new-chat", "settings-open-folder",
@@ -31,6 +31,8 @@ let attachments = [];
 let paletteSelection = 0;
 let activeModal = null;
 let nextChatNumber = 1;
+let savedSessions = [];
+let savedSessionsWorkspace = "";
 
 const MODEL_ROLES = [
   { id: "default", name: "Default", description: "Primary chat model" },
@@ -138,8 +140,60 @@ function formatTime(timestamp) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp || Date.now());
 }
 
+function formatTimeAgo(timestamp) {
+  const elapsed = Math.max(0, Date.now() - Number(timestamp || 0));
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days < 7 ? `${days}d ago` : new Date(timestamp).toLocaleDateString();
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+function normalizedSessionPath(value) {
+  return String(value || "").replaceAll("\\", "/").toLowerCase();
+}
+
+async function refreshSavedSessions() {
+  if (!workspace) {
+    savedSessions = [];
+    savedSessionsWorkspace = "";
+    renderChatList();
+    return;
+  }
+  const requestedWorkspace = workspace;
+  try {
+    const listed = await bridge.listSessions(requestedWorkspace);
+    if (workspace !== requestedWorkspace) return;
+    savedSessions = listed;
+    savedSessionsWorkspace = requestedWorkspace;
+    for (const session of sessions.values()) {
+      const sessionFile = normalizedSessionPath(session.state?.sessionFile);
+      if (!sessionFile || session.state?.sessionName) continue;
+      const saved = savedSessions.find((item) => normalizedSessionPath(item.path) === sessionFile);
+      if (saved?.name) session.title = saved.name;
+    }
+    renderChatList();
+    updateChrome();
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
 function setWorkspace(directory) {
-  if (workspace !== directory) configuration = null;
+  const changed = workspace !== directory;
+  if (changed) {
+    configuration = null;
+    savedSessions = [];
+    savedSessionsWorkspace = "";
+  }
   workspace = directory;
   if (directory) {
     localStorage.setItem("ompDesktop.workspace", directory);
@@ -147,6 +201,7 @@ function setWorkspace(directory) {
     elements.workspace_path.textContent = compactPath(directory, 34);
     elements.workspace_path.title = directory;
     elements.open_workspace_folder.disabled = false;
+    if (savedSessionsWorkspace !== directory) void refreshSavedSessions();
   } else {
     localStorage.removeItem("ompDesktop.workspace");
     elements.workspace_name.textContent = "Choose a project";
@@ -386,6 +441,7 @@ function handleFrame(session, frame) {
         session.status = "ready";
         if (session.state) session.state.isStreaming = false;
         void refreshState(session);
+        void refreshSavedSessions();
       }
       renderState(session);
       renderChatList();
@@ -465,6 +521,7 @@ function handleFrame(session, frame) {
       if (frame.title) session.title = frame.title;
       renderChatList();
       updateChrome();
+      void refreshSavedSessions();
       break;
     case "extension_ui_request":
       handleExtensionRequest(session, frame);
@@ -648,6 +705,18 @@ function renderMessages(session) {
 
 function renderChatList() {
   elements.chat_list.replaceChildren();
+  const appendHeading = (label, count) => {
+    const heading = document.createElement("div");
+    heading.className = "chat-list-heading";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const total = document.createElement("span");
+    total.textContent = String(count);
+    heading.append(name, total);
+    elements.chat_list.append(heading);
+  };
+
+  if (sessions.size) appendHeading("Open", sessions.size);
   for (const session of sessions.values()) {
     const tab = document.createElement("div");
     tab.className = `chat-tab${session.id === activeSessionId ? " active" : ""}${session.status === "exited" ? " exited" : ""}`;
@@ -661,21 +730,75 @@ function renderChatList() {
     const title = document.createElement("strong");
     title.textContent = session.title;
     const detail = document.createElement("small");
-    detail.textContent = session.status === "streaming" ? "OMP is working" : session.status === "connecting" ? "Connecting" : session.status === "exited" ? "Disconnected" : leafName(session.cwd);
+    detail.textContent =
+      session.status === "streaming"
+        ? "OMP is working"
+        : session.status === "connecting"
+          ? "Connecting"
+          : session.status === "exited"
+            ? "Disconnected"
+            : leafName(session.cwd);
     copy.append(title, detail);
     const close = document.createElement("button");
     close.className = "chat-close";
     close.textContent = "×";
     close.title = "Close chat";
-    close.addEventListener("click", (event) => { event.stopPropagation(); void closeChat(session.id); });
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void closeChat(session.id);
+    });
     tab.append(state, copy, close);
     tab.addEventListener("click", () => setActiveSession(session.id));
     tab.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setActiveSession(session.id); }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setActiveSession(session.id);
+      }
     });
     elements.chat_list.append(tab);
   }
-  elements.chat_count.textContent = String(sessions.size);
+
+  const openPaths = new Set(
+    [...sessions.values()].map((session) => normalizedSessionPath(session.state?.sessionFile)).filter(Boolean),
+  );
+  const closedSaved = savedSessions.filter((saved) => !openPaths.has(normalizedSessionPath(saved.path)));
+  if (closedSaved.length) appendHeading("Saved", closedSaved.length);
+  for (const saved of closedSaved.slice(0, 7)) {
+    const tab = document.createElement("div");
+    tab.className = "chat-tab saved";
+    tab.tabIndex = 0;
+    tab.setAttribute("role", "button");
+    tab.title = saved.path;
+    const state = document.createElement("span");
+    state.className = "chat-tab-state";
+    const copy = document.createElement("span");
+    copy.className = "chat-tab-copy";
+    const title = document.createElement("strong");
+    title.textContent = saved.name;
+    const detail = document.createElement("small");
+    detail.textContent = `${formatTimeAgo(saved.modifiedAt)} · ${formatFileSize(saved.size)}`;
+    copy.append(title, detail);
+    const open = document.createElement("span");
+    open.className = "saved-open-icon";
+    open.textContent = "›";
+    tab.append(state, copy, open);
+    tab.addEventListener("click", () => void openSavedSession(saved));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void openSavedSession(saved);
+      }
+    });
+    elements.chat_list.append(tab);
+  }
+  if (closedSaved.length > 7) {
+    const more = document.createElement("button");
+    more.className = "more-sessions";
+    more.textContent = `Open another saved session · ${closedSaved.length - 7} more`;
+    more.addEventListener("click", () => void resumeSession());
+    elements.chat_list.append(more);
+  }
+  elements.chat_count.textContent = String(sessions.size + closedSaved.length);
 }
 function renderThroughput(session) {
   if (!session || session.id !== activeSessionId) return;
@@ -910,6 +1033,7 @@ async function startChat({ initialMessage } = {}) {
     renderState(session);
     renderPalette();
     updateChrome();
+    void refreshSavedSessions();
     if (initialMessage) {
       elements.message_input.value = initialMessage;
       autoSizeComposer();
@@ -937,6 +1061,7 @@ async function closeChat(id) {
   renderChatList();
   if (activeSessionId) setActiveSession(activeSessionId);
   else updateChrome();
+  void refreshSavedSessions();
 }
 
 async function sendMessage() {
@@ -1187,14 +1312,11 @@ async function compactContext() {
   }
 }
 
-async function resumeSession() {
-  const session = activeSession();
-  if (!session || session.status === "streaming") return;
+async function switchSession(session, sessionPath, displayName) {
+  if (!session || session.status === "streaming") return false;
   try {
-    const sessionPath = await bridge.chooseSession();
-    if (!sessionPath) return;
     const result = await rpc(session, { type: "switch_session", sessionPath });
-    if (result?.cancelled) return;
+    if (result?.cancelled) return false;
     session.activeAssistantId = null;
     session.tools.clear();
     session.activities.clear();
@@ -1203,16 +1325,39 @@ async function resumeSession() {
       rpc(session, { type: "get_messages" }),
     ]);
     session.state = state;
-    session.title = state.sessionName || leafName(sessionPath).replace(/\.jsonl$/u, "");
+    session.title = state.sessionName || displayName || leafName(sessionPath).replace(/\.jsonl$/u, "");
     appendHistory(session, messages?.messages || []);
     renderChatList();
     renderState(session);
     renderActivity(session);
     updateChrome();
+    void refreshSavedSessions();
     toast("Session resumed.");
+    return true;
   } catch (error) {
     toast(cleanError(error), "error");
+    return false;
   }
+}
+
+async function resumeSession() {
+  const session = activeSession();
+  if (!session || session.status === "streaming") return;
+  const sessionPath = await bridge.chooseSession();
+  if (sessionPath) await switchSession(session, sessionPath);
+}
+
+async function openSavedSession(saved) {
+  const savedPath = normalizedSessionPath(saved.path);
+  const existing = [...sessions.values()].find(
+    (session) => normalizedSessionPath(session.state?.sessionFile) === savedPath,
+  );
+  if (existing) {
+    setActiveSession(existing.id);
+    return;
+  }
+  const session = await startChat();
+  if (session) await switchSession(session, saved.path, saved.name);
 }
 
 function settingsAreOpen() {
@@ -1701,6 +1846,7 @@ async function initialize() {
     if (!expected) addMessage(session, { role: "notice", text: "OMP disconnected.", level: "error" });
     renderChatList();
     updateChrome();
+    void refreshSavedSessions();
   }));
   disposables.push(bridge.onCommand(handleAppCommand));
   try {
@@ -1728,6 +1874,7 @@ elements.open_workspace_folder.addEventListener("click", () => {
   if (workspace) void bridge.openWorkspace(workspace).catch((error) => toast(cleanError(error), "error"));
 });
 elements.new_chat.addEventListener("click", () => void startChat());
+elements.refresh_sessions.addEventListener("click", () => void refreshSavedSessions());
 elements.open_command_palette.addEventListener("click", openPalette);
 elements.show_commands.addEventListener("click", openPalette);
 elements.attach_image.addEventListener("click", () => void attachImage());

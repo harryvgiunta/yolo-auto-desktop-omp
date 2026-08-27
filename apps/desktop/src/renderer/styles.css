@@ -49,6 +49,9 @@ button:disabled { cursor: default; opacity: .4; }
 .inspector { display: flex; overflow: hidden; flex-direction: column; border-left: 1px solid var(--border); }
 .sidebar-section, .inspector-section { padding: 17px 15px; border-bottom: 1px solid #1c242e; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #717e8d; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.explorer-controls { display: flex; align-items: center; gap: 7px; }
+.explorer-controls button { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: #687584; font-size: 13px; cursor: pointer; }
+.explorer-controls button:hover { color: var(--accent); }
 .icon-button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--subtle); cursor: pointer; }
 .icon-button:hover:not(:disabled) { background: var(--soft); color: var(--text); }
 .workspace-card { display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; gap: 9px; align-items: center; width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: linear-gradient(135deg, #121820, #10151c); text-align: left; cursor: pointer; transition: 140ms ease; }
@@ -75,6 +78,7 @@ kbd { padding: 2px 4px; border: 1px solid #303a46; border-radius: 4px; backgroun
 .chats-section { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .count-badge, .section-count { min-width: 0; height: auto; border: 0; color: #7c8998; font-size: 9px; letter-spacing: 0; }
 .chat-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 0; overflow: hidden; }
+.chat-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 4px 5px; border-bottom: 1px solid #1d2630; color: #566371; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .chat-list:empty::after { padding: 18px 4px; color: #485361; font-size: 10px; text-align: center; content: "No open chats"; }
 .chat-tab { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; gap: 9px; align-items: center; width: 100%; padding: 10px 4px; border: 0; border-bottom: 1px solid #18212a; border-radius: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-tab:hover { background: #121820; }
@@ -88,6 +92,12 @@ kbd { padding: 2px 4px; border: 1px solid #303a46; border-radius: 4px; backgroun
 .chat-close { width: 21px; height: 21px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #65717f; opacity: 0; cursor: pointer; }
 .chat-tab:hover .chat-close, .chat-tab.active .chat-close { opacity: 1; }
 .chat-close:hover { background: rgb(255 123 114 / 10%); color: var(--danger); }
+.chat-tab.saved .chat-tab-state { background: var(--cyan); box-shadow: none; opacity: .58; }
+.chat-tab.saved:hover .chat-tab-state { opacity: 1; }
+.saved-open-icon { color: #586574; font-size: 17px; }
+.chat-tab.saved:hover .saved-open-icon { color: var(--cyan); }
+.more-sessions { width: 100%; padding: 9px 4px; border: 0; border-bottom: 1px solid #1d2630; background: transparent; color: #687584; font-size: 8px; text-align: left; cursor: pointer; }
+.more-sessions:hover { color: var(--accent); }
 .sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; border-top: 1px solid #1c242e; color: #485361; font-size: 9px; }
 .sidebar-footer a { color: #718092; text-decoration: none; }
 .sidebar-footer a:hover { color: var(--accent); }
