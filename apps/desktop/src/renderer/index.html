@@ -8,7 +8,6 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>YOLO Auto Desktop OMP</title>
-    <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -21,7 +20,7 @@
             <span>OMP Desktop</span>
           </div>
         </div>
-        <div class="titlebar-center" id="window-title">Ready</div>
+        <div class="titlebar-center" id="window-title">Chat workspace</div>
         <div class="runtime-pill checking" id="runtime-pill">
           <span class="status-dot" aria-hidden="true"></span>
           <span id="runtime-label">Checking OMP runtime</span>
@@ -33,107 +32,144 @@
           <section class="sidebar-section project-section">
             <div class="section-heading">
               <span>Workspace</span>
-              <button class="icon-button" id="open-workspace-folder" title="Open in file manager" aria-label="Open workspace in file manager">
-                ↗
-              </button>
+              <button class="icon-button" id="open-workspace-folder" title="Open workspace in file manager" aria-label="Open workspace in file manager">↗</button>
             </div>
             <button class="workspace-card" id="choose-workspace">
               <span class="folder-icon" aria-hidden="true"></span>
               <span class="workspace-copy">
                 <strong id="workspace-name">Choose a project</strong>
-                <small id="workspace-path">OMP runs inside this folder</small>
+                <small id="workspace-path">OMP works inside this folder</small>
               </span>
               <span class="chevron" aria-hidden="true">›</span>
             </button>
           </section>
 
-          <section class="sidebar-section launch-section">
-            <label for="launch-args">Launch arguments</label>
-            <input
-              id="launch-args"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="--model provider/model"
-            />
-            <p>Optional OMP CLI flags. Quotes are supported.</p>
+          <div class="primary-actions">
+            <button class="new-chat-button" id="new-chat"><span>＋</span> New chat <kbd>Ctrl N</kbd></button>
+            <button class="command-button" id="open-command-palette"><span>⌘</span> Commands <kbd>Ctrl K</kbd></button>
+          </div>
+
+          <section class="sidebar-section chats-section">
+            <div class="section-heading"><span>Open chats</span><span class="count-badge" id="chat-count">0</span></div>
+            <div class="chat-list" id="chat-list" role="tablist" aria-label="OMP chats"></div>
           </section>
 
-          <section class="sidebar-section sessions-section">
-            <div class="section-heading">
-              <span>Sessions</span>
-              <span class="session-count" id="session-count">0</span>
-            </div>
-            <div class="session-list" id="session-list" role="tablist" aria-label="OMP sessions"></div>
-            <button class="new-session-button" id="new-session">
-              <span aria-hidden="true">＋</span>
-              New OMP session
-              <kbd>Ctrl ⇧ N</kbd>
-            </button>
+          <section class="sidebar-section launch-section">
+            <label for="launch-args">OMP launch flags</label>
+            <input id="launch-args" type="text" autocomplete="off" spellcheck="false" placeholder="--model provider/model" />
           </section>
 
           <div class="sidebar-footer">
             <a href="https://github.com/can1357/oh-my-pi#readme" id="docs-link">OMP documentation</a>
-            <span>Full TUI · native PTY</span>
+            <span>RPC v2</span>
           </div>
         </aside>
 
-        <main class="main-panel">
-          <div class="terminal-toolbar">
-            <div class="terminal-identity">
-              <span class="terminal-symbol" aria-hidden="true">›_</span>
-              <div>
-                <strong id="active-title">OMP terminal</strong>
-                <span id="active-subtitle">No active session</span>
-              </div>
+        <main class="chat-panel">
+          <div class="chat-toolbar">
+            <div class="chat-identity">
+              <span class="agent-avatar">π</span>
+              <div><strong id="active-title">OMP</strong><span id="active-subtitle">Start a chat to connect</span></div>
             </div>
-            <div class="terminal-actions">
-              <button class="toolbar-button" id="copy-output" title="Copy selected terminal text">Copy</button>
-              <button class="toolbar-button" id="restart-session" title="Restart active OMP session">Restart</button>
-              <button class="toolbar-button danger" id="stop-session" title="Stop active OMP session">Stop</button>
+            <div class="model-controls">
+              <label class="control-select model-select-wrap">
+                <span>Model</span>
+                <select id="model-select" disabled><option>Loading…</option></select>
+              </label>
+              <label class="control-select thinking-select-wrap">
+                <span>Thinking</span>
+                <select id="thinking-select" disabled>
+                  <option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option>
+                </select>
+              </label>
+              <button class="fast-toggle" id="fast-toggle" disabled><span class="toggle-dot"></span> Fast</button>
+              <button class="stop-button" id="abort-generation" disabled>Stop</button>
             </div>
           </div>
 
-          <div class="terminal-viewport" id="terminal-viewport">
-            <div class="empty-state" id="empty-state">
-              <div class="empty-visual" aria-hidden="true">
-                <div class="orbit orbit-one"></div>
-                <div class="orbit orbit-two"></div>
-                <div class="pi-core">π</div>
-              </div>
-              <p class="eyebrow">Coding agent, desktop native</p>
-              <h1>The full OMP terminal.<br />One focused workspace.</h1>
-              <p class="empty-description">
-                Every OMP model, tool, slash command, session, subagent, LSP, debugger, and keyboard shortcut runs unchanged inside a native PTY.
-              </p>
-              <button class="primary-button" id="empty-start">
-                Start OMP
-                <span aria-hidden="true">→</span>
-              </button>
-              <div class="feature-row" aria-label="Capabilities">
-                <span>31 tools</span>
-                <span>60+ providers</span>
-                <span>Native sessions</span>
+          <div class="conversation" id="conversation">
+            <div class="welcome" id="welcome">
+              <div class="welcome-mark">π</div>
+              <p class="eyebrow">Oh My Pi · Desktop native</p>
+              <h1>What are we building?</h1>
+              <p>Chat with the complete OMP agent. Tools, subagents, LSP, debugger, sessions, and slash commands stay wired in—without a terminal in the way.</p>
+              <div class="starter-grid">
+                <button data-starter="Inspect this workspace and explain its architecture."><strong>Explore the codebase</strong><span>Map packages, entry points, and data flow</span></button>
+                <button data-starter="Review the current changes for correctness, security, and maintainability."><strong>Review changes</strong><span>Find concrete bugs and risks</span></button>
+                <button data-action="resume"><strong>Resume a session</strong><span>Continue previous OMP work</span></button>
+                <button data-starter="Create a concrete implementation plan for the feature I describe next."><strong>Plan a feature</strong><span>Break work into executable phases</span></button>
               </div>
             </div>
-            <div class="terminal-stack" id="terminal-stack"></div>
+            <div class="message-list" id="message-list" aria-live="polite"></div>
           </div>
 
-          <footer class="statusbar">
-            <div class="status-message">
-              <span class="status-indicator" id="status-indicator"></span>
-              <span id="status-message">Select a workspace, then start OMP</span>
+          <div class="composer-shell">
+            <div class="attachment-list" id="attachment-list"></div>
+            <div class="command-palette" id="command-palette" hidden>
+              <div class="palette-header"><span>OMP commands</span><small>Type to filter · Enter to select</small></div>
+              <div class="palette-results" id="palette-results"></div>
             </div>
-            <div class="shortcut-hints">
-              <span><kbd>Ctrl ⇧ C</kbd> copy</span>
-              <span><kbd>Ctrl ⇧ V</kbd> paste</span>
-              <span><kbd>Ctrl C</kbd> interrupt</span>
+            <div class="composer">
+              <textarea id="message-input" rows="1" placeholder="Message OMP, or type / for commands…" aria-label="Message OMP"></textarea>
+              <div class="composer-actions">
+                <div>
+                  <button class="composer-icon" id="attach-image" title="Attach image" aria-label="Attach image">＋</button>
+                  <button class="slash-button" id="show-commands" title="Show slash commands">/</button>
+                </div>
+                <div class="send-meta"><span id="queue-label"></span><button class="send-button" id="send-message" disabled aria-label="Send message">↑</button></div>
+              </div>
             </div>
-          </footer>
+            <div class="composer-footer"><span id="connection-status"><i></i> Not connected</span><span><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line · <kbd>Esc</kbd> stop</span></div>
+          </div>
         </main>
+
+        <aside class="inspector">
+          <section class="inspector-section context-section">
+            <div class="section-heading"><span>Context</span><span id="context-percent">0%</span></div>
+            <div class="context-track"><div id="context-fill"></div></div>
+            <div class="context-stats"><span id="context-tokens">0 tokens</span><span id="context-window">— window</span></div>
+          </section>
+
+          <section class="inspector-section quick-section">
+            <div class="section-heading"><span>Quick actions</span></div>
+            <div class="quick-grid">
+              <button data-action="resume"><span>↺</span><strong>Resume</strong></button>
+              <button data-action="compact"><span>◫</span><strong>Compact</strong></button>
+              <button data-command="/review"><span>✓</span><strong>Review</strong></button>
+              <button data-command="/tools"><span>⌁</span><strong>Tools</strong></button>
+              <button data-command="/usage"><span>◔</span><strong>Usage</strong></button>
+              <button data-command="/mcp"><span>⚙</span><strong>MCP</strong></button>
+            </div>
+          </section>
+
+          <section class="inspector-section plan-section">
+            <div class="section-heading"><span>Plan</span><span class="count-badge" id="todo-count">0</span></div>
+            <div class="empty-widget" id="plan-empty">No active plan</div>
+            <div class="todo-list" id="todo-list"></div>
+          </section>
+
+          <section class="inspector-section activity-section">
+            <div class="section-heading"><span>Agent activity</span><span class="live-dot" id="activity-live"></span></div>
+            <div class="empty-widget" id="activity-empty">Tools and subagents appear here</div>
+            <div class="activity-list" id="activity-list"></div>
+          </section>
+
+          <section class="inspector-section extension-section" id="extension-section" hidden>
+            <div class="section-heading"><span>Extension widgets</span></div>
+            <div id="extension-widgets"></div>
+          </section>
+        </aside>
       </div>
     </div>
 
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header"><div><span class="modal-kicker">OMP requests input</span><h2 id="modal-title">Choose</h2></div><button id="modal-close" aria-label="Cancel">×</button></div>
+        <p id="modal-message"></p>
+        <div class="modal-content" id="modal-content"></div>
+        <div class="modal-actions" id="modal-actions"></div>
+      </div>
+    </div>
     <div class="toast-region" id="toast-region" aria-live="polite"></div>
     <script type="module" src="./app.mjs"></script>
   </body>

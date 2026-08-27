@@ -8,21 +8,60 @@ const {
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   shell,
 } = require("electron");
-const pty = require("node-pty");
 const { parseCommandLine } = require("./argv.cjs");
 const { resolveRuntime } = require("./runtime.cjs");
+const { RpcProcess } = require("./rpc-session.cjs");
 
+const RPC_COMMANDS = new Set([
+  "abort",
+  "abort_and_prompt",
+  "abort_bash",
+  "bash",
+  "branch",
+  "compact",
+  "cycle_model",
+  "cycle_thinking_level",
+  "export_html",
+  "follow_up",
+  "get_available_commands",
+  "get_available_models",
+  "get_branch_messages",
+  "get_last_assistant_text",
+  "get_login_providers",
+  "get_messages",
+  "get_messages_page",
+  "get_session_stats",
+  "get_state",
+  "get_subagent_messages",
+  "get_subagents",
+  "handoff",
+  "login",
+  "new_session",
+  "prompt",
+  "set_auto_compaction",
+  "set_auto_retry",
+  "set_fast_mode",
+  "set_follow_up_mode",
+  "set_host_tools",
+  "set_host_uri_schemes",
+  "set_interrupt_mode",
+  "set_model",
+  "set_session_name",
+  "set_steering_mode",
+  "set_subagent_subscription",
+  "set_thinking_level",
+  "set_todos",
+  "steer",
+  "switch_session",
+]);
 const sessions = new Map();
 let mainWindow = null;
 
 if (/^\d{2,5}$/u.test(process.env.OMP_DESKTOP_DEBUG_PORT || "")) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.OMP_DESKTOP_DEBUG_PORT);
-}
-
-function clampInteger(value, minimum, maximum, fallback) {
-  return Number.isInteger(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback;
 }
 
 function activeRuntime() {
@@ -51,7 +90,7 @@ function workspaceDirectory(candidate) {
 }
 
 function launchArguments(value) {
-  if (value.length > 4096) {
+  if (typeof value !== "string" || value.length > 4096) {
     throw new Error("Launch arguments may not exceed 4096 characters.");
   }
   const args = parseCommandLine(value);
@@ -61,97 +100,101 @@ function launchArguments(value) {
   return args;
 }
 
-function startSession(options) {
-  if (!options || typeof options !== "object") {
-    throw new Error("Invalid OMP session options.");
-  }
+function validSessionId(value) {
+  return typeof value === "string" && /^[0-9a-f-]{36}$/iu.test(value);
+}
 
+function sessionFor(id) {
+  return validSessionId(id) ? sessions.get(id) || null : null;
+}
+
+async function startSession(options) {
+  if (!options || typeof options !== "object") {
+    throw new Error("Invalid OMP chat session options.");
+  }
+  const id = validSessionId(options.id) ? options.id : randomUUID();
+  if (sessions.has(id)) {
+    throw new Error("The requested OMP session already exists.");
+  }
   const runtime = activeRuntime();
   if (!runtime.available) {
     throw new Error(runtime.message);
   }
-
   const cwd = workspaceDirectory(options.cwd);
   const extraArgs = launchArguments(typeof options.args === "string" ? options.args : "");
-  const cols = clampInteger(options.cols, 20, 500, 120);
-  const rows = clampInteger(options.rows, 8, 300, 40);
-  const id =
-    typeof options.id === "string" && /^[0-9a-f-]{36}$/iu.test(options.id)
-      ? options.id
-      : randomUUID();
-  if (sessions.has(id)) {
-    throw new Error("The requested OMP session already exists.");
-  }
-  const terminal = pty.spawn(runtime.command, [...runtime.args, ...extraArgs], {
-    name: "xterm-256color",
-    cols,
-    rows,
+  const rpc = new RpcProcess({
+    command: runtime.command,
+    args: [...runtime.args, "--mode", "rpc", ...extraArgs],
     cwd,
     env: {
       ...process.env,
       PWD: cwd,
-      COLORTERM: "truecolor",
-      FORCE_COLOR: "1",
-      TERM: "xterm-256color",
-      TERM_PROGRAM: "yolo-auto-desktop-omp",
-      TERM_PROGRAM_VERSION: app.getVersion(),
+      PI_RPC_EMIT_TITLE: "1",
+      TERM: "dumb",
     },
   });
-
   const session = {
     id,
-    terminal,
+    rpc,
     cwd,
     args: typeof options.args === "string" ? options.args : "",
     startedAt: Date.now(),
   };
   sessions.set(id, session);
-
-  terminal.onData((data) => {
-    send("terminal:data", { id, data });
-  });
-  terminal.onExit(({ exitCode, signal }) => {
+  rpc.on("frame", (frame) => send("chat:event", { sessionId: id, frame }));
+  rpc.on("exit", (result) => {
     sessions.delete(id);
-    send("terminal:exit", { id, exitCode, signal });
+    send("chat:exit", { sessionId: id, ...result });
   });
 
-  return {
-    id,
-    cwd,
-    args: session.args,
-    runtime: {
-      label: runtime.label,
-      mode: runtime.mode,
-      version: runtime.version,
-    },
-    startedAt: session.startedAt,
-  };
-}
-
-function sessionFor(id) {
-  if (typeof id !== "string") {
-    return null;
+  try {
+    const ready = await rpc.start();
+    return {
+      id,
+      cwd,
+      args: session.args,
+      startedAt: session.startedAt,
+      ready,
+      runtime: {
+        label: runtime.label,
+        mode: runtime.mode,
+        version: runtime.version,
+      },
+    };
+  } catch (error) {
+    sessions.delete(id);
+    await rpc.stop();
+    throw error;
   }
-  return sessions.get(id) || null;
 }
 
-function stopSession(id) {
+async function requestSession(id, command) {
+  const session = sessionFor(id);
+  if (!session) {
+    throw new Error("The OMP chat session is not running.");
+  }
+  if (!command || typeof command !== "object" || !RPC_COMMANDS.has(command.type)) {
+    throw new Error("Unsupported OMP RPC command.");
+  }
+  const sanitized = { ...command };
+  delete sanitized.id;
+  const timeout = command.type === "bash" ? 600_000 : command.type === "login" ? 300_000 : 60_000;
+  return session.rpc.request(sanitized, timeout);
+}
+
+async function stopSession(id) {
   const session = sessionFor(id);
   if (!session) {
     return false;
   }
-  session.terminal.kill();
   sessions.delete(id);
+  await session.rpc.stop();
   return true;
 }
 
 function stopAllSessions() {
   for (const session of sessions.values()) {
-    try {
-      session.terminal.kill();
-    } catch {
-      // The process already exited.
-    }
+    void session.rpc.stop();
   }
   sessions.clear();
 }
@@ -163,6 +206,57 @@ function isSafeExternalUrl(value) {
   } catch {
     return false;
   }
+}
+
+async function chooseAttachment() {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Attach an image",
+    properties: ["openFile"],
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+  });
+  if (result.canceled) {
+    return null;
+  }
+  const filePath = result.filePaths[0];
+  let image = nativeImage.createFromPath(filePath);
+  if (image.isEmpty()) {
+    throw new Error("The selected image could not be decoded.");
+  }
+  const originalSize = image.getSize();
+  const longestSide = Math.max(originalSize.width, originalSize.height);
+  if (longestSide > 1600) {
+    const scale = 1600 / longestSide;
+    image = image.resize({
+      width: Math.max(1, Math.round(originalSize.width * scale)),
+      height: Math.max(1, Math.round(originalSize.height * scale)),
+      quality: "best",
+    });
+  }
+  let quality = 88;
+  let buffer = image.toJPEG(quality);
+  while (buffer.length > 650_000 && quality > 52) {
+    quality -= 8;
+    buffer = image.toJPEG(quality);
+  }
+  if (buffer.length > 700_000) {
+    const size = image.getSize();
+    const scale = Math.sqrt(650_000 / buffer.length);
+    image = image.resize({
+      width: Math.max(320, Math.round(size.width * scale)),
+      height: Math.max(320, Math.round(size.height * scale)),
+      quality: "best",
+    });
+    buffer = image.toJPEG(72);
+  }
+  return {
+    name: path.basename(filePath),
+    content: {
+      type: "image",
+      data: buffer.toString("base64"),
+      mimeType: "image/jpeg",
+    },
+    preview: `data:image/jpeg;base64,${buffer.toString("base64")}`,
+  };
 }
 
 function registerIpc() {
@@ -178,7 +272,6 @@ function registerIpc() {
         }
       : runtime;
   });
-
   ipcMain.handle("workspace:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Choose an OMP workspace",
@@ -186,36 +279,33 @@ function registerIpc() {
     });
     return result.canceled ? null : result.filePaths[0];
   });
-
   ipcMain.handle("workspace:initial", () => app.getPath("home"));
   ipcMain.handle("workspace:open", async (_event, directory) => {
-    const safeDirectory = workspaceDirectory(directory);
-    const error = await shell.openPath(safeDirectory);
+    const error = await shell.openPath(workspaceDirectory(directory));
     if (error) {
       throw new Error(error);
     }
     return true;
   });
-
-  ipcMain.handle("terminal:start", (_event, options) => startSession(options));
-  ipcMain.on("terminal:write", (_event, payload) => {
-    const session = sessionFor(payload?.id);
-    if (session && typeof payload.data === "string" && payload.data.length <= 65_536) {
-      session.terminal.write(payload.data);
+  ipcMain.handle("session:choose", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Resume an OMP session",
+      defaultPath: path.join(app.getPath("home"), ".omp", "agent", "sessions"),
+      properties: ["openFile"],
+      filters: [{ name: "OMP sessions", extensions: ["jsonl"] }],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("attachment:choose", chooseAttachment);
+  ipcMain.handle("chat:start", (_event, options) => startSession(options));
+  ipcMain.handle("chat:request", (_event, payload) => requestSession(payload?.sessionId, payload?.command));
+  ipcMain.handle("chat:stop", (_event, id) => stopSession(id));
+  ipcMain.on("chat:send-frame", (_event, payload) => {
+    const session = sessionFor(payload?.sessionId);
+    if (session && payload?.frame?.type === "extension_ui_response") {
+      session.rpc.send(payload.frame);
     }
   });
-  ipcMain.on("terminal:resize", (_event, payload) => {
-    const session = sessionFor(payload?.id);
-    if (!session) {
-      return;
-    }
-    const cols = clampInteger(payload.cols, 20, 500, null);
-    const rows = clampInteger(payload.rows, 8, 300, null);
-    if (cols && rows) {
-      session.terminal.resize(cols, rows);
-    }
-  });
-  ipcMain.handle("terminal:stop", (_event, id) => stopSession(id));
   ipcMain.handle("clipboard:read", () => clipboard.readText());
   ipcMain.handle("clipboard:write", (_event, value) => {
     if (typeof value !== "string" || value.length > 1_000_000) {
@@ -240,9 +330,9 @@ function installMenu() {
       label: "File",
       submenu: [
         {
-          label: "New OMP Session",
-          accelerator: "CmdOrCtrl+Shift+N",
-          click: () => send("app:command", "new-session"),
+          label: "New Chat",
+          accelerator: "CmdOrCtrl+N",
+          click: () => send("app:command", "new-chat"),
         },
         {
           label: "Open Workspace…",
@@ -250,17 +340,16 @@ function installMenu() {
           click: () => send("app:command", "open-workspace"),
         },
         { type: "separator" },
-        {
-          label: "Close Session",
-          accelerator: "CmdOrCtrl+Shift+W",
-          click: () => send("app:command", "close-session"),
-        },
-        ...(process.platform === "darwin" ? [] : [{ type: "separator" }, { role: "quit" }]),
+        ...(process.platform === "darwin" ? [] : [{ role: "quit" }]),
       ],
     },
     {
       label: "Edit",
       submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
         { role: "copy" },
         { role: "paste" },
         { role: "selectAll" },
@@ -270,9 +359,19 @@ function installMenu() {
       label: "View",
       submenu: [
         {
-          label: "Restart OMP Session",
-          accelerator: "CmdOrCtrl+Shift+R",
-          click: () => send("app:command", "restart-session"),
+          label: "Command Palette",
+          accelerator: "CmdOrCtrl+K",
+          click: () => send("app:command", "command-palette"),
+        },
+        {
+          label: "Focus Message",
+          accelerator: "CmdOrCtrl+L",
+          click: () => send("app:command", "focus-composer"),
+        },
+        {
+          label: "Stop Generation",
+          accelerator: "Escape",
+          click: () => send("app:command", "abort"),
         },
         { type: "separator" },
         { role: "resetZoom" },
@@ -300,10 +399,10 @@ function installMenu() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
+    width: 1500,
+    height: 940,
+    minWidth: 1040,
+    minHeight: 680,
     show: false,
     backgroundColor: "#080b0f",
     icon: path.join(__dirname, "..", "assets", "app-icon.png"),
@@ -321,7 +420,6 @@ function createWindow() {
       sandbox: true,
     },
   });
-
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("closed", () => {
@@ -329,7 +427,7 @@ function createWindow() {
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) {
-      shell.openExternal(url);
+      void shell.openExternal(url);
     }
     return { action: "deny" };
   });

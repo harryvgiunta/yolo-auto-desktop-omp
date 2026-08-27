@@ -1,55 +1,36 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
-const pty = require("node-pty");
 const manifest = require("../runtime-manifest.json");
+const { RpcProcess } = require("../src/rpc-session.cjs");
 const { resolveRuntime } = require("../src/runtime.cjs");
 
 async function main() {
   const desktopDirectory = path.resolve(__dirname, "..");
-  const runtime = resolveRuntime({
-    desktopDirectory,
-    isPackaged: false,
-  });
-
+  const runtime = resolveRuntime({ desktopDirectory, isPackaged: false });
   assert.equal(runtime.available, true, runtime.message);
 
-  let output = "";
-  const terminal = pty.spawn(runtime.command, [...runtime.args, "--version"], {
-    name: "xterm-256color",
-    cols: 100,
-    rows: 24,
+  const rpc = new RpcProcess({
+    command: runtime.command,
+    args: [...runtime.args, "--mode", "rpc"],
     cwd: desktopDirectory,
-    env: {
-      ...process.env,
-      COLORTERM: "truecolor",
-      TERM: "xterm-256color",
-    },
+    env: { ...process.env, PWD: desktopDirectory, TERM: "dumb" },
   });
-  terminal.onData((data) => {
-    output += data;
-  });
+  const ready = await rpc.start();
+  assert.equal(ready.type, "ready");
+  assert.ok(ready.supportedProtocolVersions.includes(2));
 
-  const result = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      terminal.kill();
-      reject(new Error("OMP did not answer --version through the desktop PTY within 20 seconds."));
-    }, 20_000);
-    terminal.onExit(({ exitCode, signal }) => {
-      clearTimeout(timeout);
-      resolve({ exitCode, signal });
-    });
-  });
+  const state = await rpc.request({ type: "get_state" });
+  assert.equal(state.success, true, state.error);
+  assert.equal(typeof state.data.sessionId, "string");
+  assert.equal(typeof state.data.isStreaming, "boolean");
 
-  const plainOutput = output
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/gu, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "");
-  assert.ok(
-    result.signal === undefined || result.signal === 0,
-    `OMP exited from signal ${result.signal}: ${plainOutput}`,
-  );
-  assert.equal(result.exitCode, 0, plainOutput);
-  assert.match(plainOutput, new RegExp(`\\b${manifest.version.replaceAll(".", "\\.")}\\b`, "u"));
-  console.log(`Desktop PTY launched OMP ${manifest.version} successfully.`);
+  const commands = await rpc.request({ type: "get_available_commands" });
+  assert.equal(commands.success, true, commands.error);
+  const modelCommand = commands.data.commands.find((command) => command.name === "model");
+  assert.equal(typeof modelCommand?.description, "string");
+
+  await rpc.stop();
+  console.log(`Desktop RPC connected to OMP ${manifest.version} and loaded slash commands successfully.`);
 }
 
 main().then(

@@ -1,539 +1,1269 @@
-import { FitAddon } from "../../node_modules/@xterm/addon-fit/lib/addon-fit.mjs";
-import { WebLinksAddon } from "../../node_modules/@xterm/addon-web-links/lib/addon-web-links.mjs";
-import { Terminal } from "../../node_modules/@xterm/xterm/lib/xterm.mjs";
+import DOMPurify from "../../node_modules/dompurify/dist/purify.es.mjs";
+import { marked } from "../../node_modules/marked/lib/marked.esm.js";
+
+marked.setOptions({ gfm: true, breaks: false });
 
 const bridge = window.ompDesktop;
-const elements = {
-  activeSubtitle: document.querySelector("#active-subtitle"),
-  activeTitle: document.querySelector("#active-title"),
-  chooseWorkspace: document.querySelector("#choose-workspace"),
-  copyOutput: document.querySelector("#copy-output"),
-  docsLink: document.querySelector("#docs-link"),
-  emptyStart: document.querySelector("#empty-start"),
-  emptyState: document.querySelector("#empty-state"),
-  launchArgs: document.querySelector("#launch-args"),
-  newSession: document.querySelector("#new-session"),
-  openWorkspaceFolder: document.querySelector("#open-workspace-folder"),
-  restartSession: document.querySelector("#restart-session"),
-  runtimeLabel: document.querySelector("#runtime-label"),
-  runtimePill: document.querySelector("#runtime-pill"),
-  sessionCount: document.querySelector("#session-count"),
-  sessionList: document.querySelector("#session-list"),
-  statusIndicator: document.querySelector("#status-indicator"),
-  statusMessage: document.querySelector("#status-message"),
-  stopSession: document.querySelector("#stop-session"),
-  terminalStack: document.querySelector("#terminal-stack"),
-  toastRegion: document.querySelector("#toast-region"),
-  windowTitle: document.querySelector("#window-title"),
-  workspaceName: document.querySelector("#workspace-name"),
-  workspacePath: document.querySelector("#workspace-path"),
-};
+const elements = Object.fromEntries(
+  [
+    "abort-generation", "active-subtitle", "active-title", "activity-empty", "activity-list", "activity-live",
+    "attach-image", "attachment-list", "chat-count", "chat-list", "choose-workspace", "command-palette",
+    "connection-status", "context-fill", "context-percent", "context-tokens", "context-window", "conversation",
+    "docs-link", "extension-section", "extension-widgets", "fast-toggle", "launch-args", "message-input",
+    "message-list", "modal-actions", "modal-backdrop", "modal-close", "modal-content", "modal-message", "modal-title",
+    "model-select", "new-chat", "open-command-palette", "open-workspace-folder", "palette-results", "plan-empty",
+    "queue-label", "runtime-label", "runtime-pill", "send-message", "show-commands", "thinking-select", "todo-count",
+    "todo-list", "toast-region", "welcome", "window-title", "workspace-name", "workspace-path",
+  ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]),
+);
 
 const sessions = new Map();
 const disposables = [];
 let activeSessionId = null;
 let runtimeAvailable = false;
 let workspace = localStorage.getItem("ompDesktop.workspace") || "";
-let nextSessionNumber = 1;
+let attachments = [];
+let paletteSelection = 0;
+let activeModal = null;
+let nextChatNumber = 1;
 
 function leafName(filePath) {
   const normalized = filePath.replace(/[\\/]+$/u, "");
-  const parts = normalized.split(/[\\/]/u);
-  return parts.at(-1) || normalized;
+  return normalized.split(/[\\/]/u).at(-1) || normalized;
 }
 
-function compactPath(filePath, maximum = 52) {
-  if (filePath.length <= maximum) {
-    return filePath;
-  }
-  return `…${filePath.slice(-(maximum - 1))}`;
+function compactPath(filePath, maximum = 46) {
+  return filePath.length <= maximum ? filePath : `…${filePath.slice(-(maximum - 1))}`;
 }
 
 function cleanError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/^Error invoking remote method '[^']+': Error: /u, "");
+  return (error instanceof Error ? error.message : String(error)).replace(
+    /^Error invoking remote method '[^']+': Error: /u,
+    "",
+  );
+}
+
+function stripAnsi(value) {
+  return String(value || "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/gu, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, "");
 }
 
 function toast(message, type = "info") {
   const item = document.createElement("div");
   item.className = `toast ${type}`;
   item.textContent = message;
-  elements.toastRegion.append(item);
-  window.setTimeout(() => item.remove(), 4200);
-}
-
-function setStatus(message, state = "idle") {
-  elements.statusMessage.textContent = message;
-  elements.statusIndicator.className = `status-indicator ${state}`;
-}
-
-function setWorkspace(directory) {
-  workspace = directory;
-  if (directory) {
-    localStorage.setItem("ompDesktop.workspace", directory);
-    elements.workspaceName.textContent = leafName(directory);
-    elements.workspacePath.textContent = compactPath(directory, 36);
-    elements.workspacePath.title = directory;
-    elements.openWorkspaceFolder.disabled = false;
-  } else {
-    localStorage.removeItem("ompDesktop.workspace");
-    elements.workspaceName.textContent = "Choose a project";
-    elements.workspacePath.textContent = "OMP runs inside this folder";
-    elements.workspacePath.removeAttribute("title");
-    elements.openWorkspaceFolder.disabled = true;
-  }
-  updateControls();
+  elements.toast_region.append(item);
+  window.setTimeout(() => item.remove(), 4500);
 }
 
 function activeSession() {
   return activeSessionId ? sessions.get(activeSessionId) || null : null;
 }
 
-function elapsedLabel(startedAt) {
-  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+function markdown(text) {
+  return DOMPurify.sanitize(marked.parse(text || ""), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["style", "iframe", "object", "embed", "form", "input", "button"],
+  });
 }
 
-function renderSessionList() {
-  elements.sessionList.replaceChildren();
-  for (const session of sessions.values()) {
-    const item = document.createElement("div");
-    item.tabIndex = 0;
-    item.className = `session-item${session.id === activeSessionId ? " active" : ""}${session.state === "exited" ? " exited" : ""}`;
-    item.setAttribute("role", "tab");
-    item.setAttribute("aria-selected", String(session.id === activeSessionId));
-    item.title = session.cwd;
-
-    const state = document.createElement("span");
-    state.className = "session-state";
-    state.setAttribute("aria-hidden", "true");
-
-    const copy = document.createElement("span");
-    copy.className = "session-item-copy";
-    const title = document.createElement("strong");
-    title.textContent = session.title;
-    const detail = document.createElement("small");
-    detail.textContent = session.state === "exited" ? "Exited" : `${session.state === "starting" ? "Starting" : "Running"} · ${elapsedLabel(session.startedAt)}`;
-    copy.append(title, detail);
-
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "session-close";
-    close.textContent = "×";
-    close.title = "Close session";
-    close.setAttribute("aria-label", `Close ${session.title}`);
-    close.addEventListener("click", (event) => {
-      event.stopPropagation();
-      void closeSession(session.id);
-    });
-
-    item.append(state, copy, close);
-    item.addEventListener("click", () => setActiveSession(session.id));
-    item.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        setActiveSession(session.id);
-      }
-    });
-    elements.sessionList.append(item);
+function textContent(content) {
+  if (typeof content === "string") {
+    return content;
   }
-  elements.sessionCount.textContent = String(sessions.size);
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((item) => item?.type === "text").map((item) => item.text || "").join("");
 }
 
-function updateControls() {
-  const session = activeSession();
-  const running = session && (session.state === "running" || session.state === "starting");
-  elements.copyOutput.disabled = !session;
-  elements.restartSession.disabled = !session || session.state === "starting";
-  elements.stopSession.disabled = !running;
-  elements.newSession.disabled = !runtimeAvailable || !workspace;
-  elements.emptyStart.disabled = !runtimeAvailable;
-
-  if (!session) {
-    elements.emptyState.classList.remove("hidden");
-    elements.activeTitle.textContent = "OMP terminal";
-    elements.activeSubtitle.textContent = "No active session";
-    elements.windowTitle.textContent = workspace ? leafName(workspace) : "Ready";
-    setStatus(
-      runtimeAvailable ? "Select a workspace, then start OMP" : "OMP runtime is unavailable",
-      runtimeAvailable ? "idle" : "error",
-    );
-    return;
+function thinkingContent(content) {
+  if (!Array.isArray(content)) {
+    return "";
   }
+  return content.filter((item) => item?.type === "thinking").map((item) => item.thinking || "").join("");
+}
 
-  elements.emptyState.classList.add("hidden");
-  elements.activeTitle.textContent = session.title;
-  elements.activeSubtitle.textContent = session.cwd;
-  elements.windowTitle.textContent = `${session.title} — ${leafName(session.cwd)}`;
-  if (session.state === "running") {
-    setStatus(`OMP running in ${session.cwd}`, "running");
-  } else if (session.state === "starting") {
-    setStatus("Starting the OMP runtime…", "idle");
+function imageContent(content) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content
+    .filter((item) => item?.type === "image" && item.data && item.mimeType)
+    .map((item) => `data:${item.mimeType};base64,${item.data}`);
+}
+
+function summarize(value, maximum = 1800) {
+  let text;
+  if (typeof value === "string") {
+    text = value;
+  } else if (value?.content && Array.isArray(value.content)) {
+    text = textContent(value.content);
   } else {
-    setStatus(session.exitLabel || "OMP session exited", "idle");
+    try {
+      text = JSON.stringify(value, null, 2);
+    } catch {
+      text = String(value);
+    }
   }
+  if (!text) {
+    return "";
+  }
+  return text.length > maximum ? `${text.slice(0, maximum)}\n…` : text;
 }
 
-function fitSession(session) {
-  if (!session || session.id !== activeSessionId || session.state === "disposed") {
-    return;
-  }
-  try {
-    session.fitAddon.fit();
-    bridge.resize(session.id, session.terminal.cols, session.terminal.rows);
-  } catch {
-    // The host is between layout states; the ResizeObserver will retry.
-  }
+function formatTime(timestamp) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp || Date.now());
 }
 
-function setActiveSession(id) {
-  if (!sessions.has(id)) {
-    return;
+function setWorkspace(directory) {
+  workspace = directory;
+  if (directory) {
+    localStorage.setItem("ompDesktop.workspace", directory);
+    elements.workspace_name.textContent = leafName(directory);
+    elements.workspace_path.textContent = compactPath(directory, 34);
+    elements.workspace_path.title = directory;
+    elements.open_workspace_folder.disabled = false;
+  } else {
+    localStorage.removeItem("ompDesktop.workspace");
+    elements.workspace_name.textContent = "Choose a project";
+    elements.workspace_path.textContent = "OMP works inside this folder";
+    elements.open_workspace_folder.disabled = true;
   }
-  activeSessionId = id;
-  for (const session of sessions.values()) {
-    session.host.classList.toggle("active", session.id === id);
-  }
-  renderSessionList();
-  updateControls();
-  const session = sessions.get(id);
-  requestAnimationFrame(() => {
-    fitSession(session);
-    session.terminal.focus();
-  });
+  updateChrome();
 }
 
-async function copySelection() {
-  const session = activeSession();
-  if (!session) {
-    return;
-  }
-  const selection = session.terminal.getSelection();
-  if (!selection) {
-    toast("Select terminal text before copying.");
-    return;
-  }
-  await bridge.writeClipboard(selection);
-  toast("Terminal selection copied.");
-}
-
-async function pasteClipboard(session = activeSession()) {
-  if (!session || session.state === "exited") {
-    return;
-  }
-  const text = await bridge.readClipboard();
-  if (text) {
-    session.terminal.paste(text);
-  }
-}
-
-function createTerminalSession({ id, cwd, args }) {
-  const host = document.createElement("div");
-  host.className = "terminal-host";
-  host.dataset.sessionId = id;
-  elements.terminalStack.append(host);
-
-  const terminal = new Terminal({
-    allowProposedApi: false,
-    allowTransparency: true,
-    convertEol: false,
-    cursorBlink: true,
-    cursorStyle: "bar",
-    cursorWidth: 2,
-    fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
-    fontSize: 13,
-    fontWeight: "400",
-    fontWeightBold: "650",
-    letterSpacing: 0,
-    lineHeight: 1.22,
-    minimumContrastRatio: 4.5,
-    rightClickSelectsWord: true,
-    scrollback: 20_000,
-    smoothScrollDuration: 110,
-    theme: {
-      background: "#080b0f",
-      foreground: "#d6dee7",
-      cursor: "#c7f36a",
-      cursorAccent: "#080b0f",
-      selectionBackground: "#314233",
-      selectionForeground: "#f3f7fb",
-      black: "#11161d",
-      red: "#ff7b72",
-      green: "#c7f36a",
-      yellow: "#f4c15d",
-      blue: "#79a9ff",
-      magenta: "#d19bf4",
-      cyan: "#64d7e7",
-      white: "#d6dee7",
-      brightBlack: "#637080",
-      brightRed: "#ff9a93",
-      brightGreen: "#d7ff80",
-      brightYellow: "#ffd982",
-      brightBlue: "#9bbfff",
-      brightMagenta: "#e3b7ff",
-      brightCyan: "#8ce9f3",
-      brightWhite: "#ffffff",
-    },
-  });
-  const fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon((_event, uri) => bridge.openExternal(uri)));
-  terminal.open(host);
-
+function createSession(id, cwd, args) {
   const session = {
     id,
-    terminal,
-    fitAddon,
-    host,
     cwd,
     args,
-    title: `${leafName(cwd)} · ${nextSessionNumber}`,
-    state: "starting",
+    title: `${leafName(cwd)} · ${nextChatNumber}`,
+    status: "connecting",
     startedAt: Date.now(),
-    exitLabel: "",
+    messages: [],
+    activeAssistantId: null,
+    commands: [],
+    models: [],
+    state: null,
+    tools: new Map(),
+    activities: new Map(),
+    extensionWidgets: new Map(),
+    extensionStatus: new Map(),
+    renderScheduled: false,
   };
-  nextSessionNumber += 1;
+  nextChatNumber += 1;
   sessions.set(id, session);
-
-  terminal.onData((data) => bridge.write(id, data));
-  terminal.onResize(({ cols, rows }) => bridge.resize(id, cols, rows));
-  terminal.attachCustomKeyEventHandler((event) => {
-    const primary = event.ctrlKey || event.metaKey;
-    if (event.type !== "keydown" || !primary || !event.shiftKey) {
-      return true;
-    }
-    if (event.key.toLowerCase() === "c") {
-      void copySelection();
-      return false;
-    }
-    if (event.key.toLowerCase() === "v") {
-      void pasteClipboard(session);
-      return false;
-    }
-    return true;
-  });
-  host.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    void pasteClipboard(session);
-  });
   return session;
 }
 
-async function startSession(overrides = {}) {
-  const cwd = overrides.cwd || workspace;
-  const args = overrides.args ?? elements.launchArgs.value.trim();
-  if (!cwd) {
-    await chooseWorkspace(true);
-    return;
-  }
-  if (!runtimeAvailable) {
-    toast("The OMP runtime is unavailable. Run npm run runtime:prepare.", "error");
-    return;
-  }
-
-  const id = crypto.randomUUID();
-  const session = createTerminalSession({ id, cwd, args });
-  setActiveSession(id);
-  requestAnimationFrame(() => fitSession(session));
-
-  try {
-    const result = await bridge.startSession({
-      id,
-      cwd,
-      args,
-      cols: terminalSize(session).cols,
-      rows: terminalSize(session).rows,
-    });
-    session.state = "running";
-    session.startedAt = result.startedAt;
-    session.runtime = result.runtime;
-    renderSessionList();
-    updateControls();
-    session.terminal.focus();
-  } catch (error) {
-    const message = cleanError(error);
-    session.state = "exited";
-    session.exitLabel = `Launch failed: ${message}`;
-    session.terminal.writeln(`\r\n\x1b[31mOMP failed to start:\x1b[0m ${message}`);
-    renderSessionList();
-    updateControls();
-    toast(message, "error");
-  }
+function addMessage(session, message) {
+  const normalized = {
+    id: message.id || crypto.randomUUID(),
+    role: message.role,
+    text: message.text || "",
+    thinking: message.thinking || "",
+    images: message.images || [],
+    model: message.model || "",
+    timestamp: message.timestamp || Date.now(),
+    streaming: Boolean(message.streaming),
+    pending: Boolean(message.pending),
+    level: message.level || "info",
+    tools: message.tools || [],
+  };
+  session.messages.push(normalized);
+  scheduleMessages(session);
+  updateChrome();
+  return normalized;
 }
 
-function terminalSize(session) {
+function assistantFromWire(message) {
   return {
-    cols: Math.max(20, session.terminal.cols || 120),
-    rows: Math.max(8, session.terminal.rows || 40),
+    role: "assistant",
+    text: textContent(message?.content),
+    thinking: thinkingContent(message?.content),
+    model: message?.model || "",
+    timestamp: message?.timestamp || Date.now(),
+    streaming: message?.stopReason === undefined,
   };
 }
 
-async function stopActiveSession() {
-  const session = activeSession();
-  if (!session || session.state === "exited") {
+function appendHistory(session, wireMessages) {
+  session.messages = [];
+  for (const message of wireMessages || []) {
+    if (message?.role === "user") {
+      session.messages.push({
+        id: crypto.randomUUID(), role: "user", text: textContent(message.content), images: imageContent(message.content),
+        timestamp: message.timestamp || Date.now(), streaming: false, pending: false, tools: [],
+      });
+    } else if (message?.role === "assistant") {
+      session.messages.push({ id: crypto.randomUUID(), ...assistantFromWire(message), streaming: false, tools: [] });
+    } else if (message?.role === "toolResult" && message.isError) {
+      session.messages.push({
+        id: crypto.randomUUID(), role: "notice", text: `${message.toolName}: ${textContent(message.content)}`,
+        timestamp: message.timestamp || Date.now(), level: "error", streaming: false, tools: [],
+      });
+    }
+  }
+  scheduleMessages(session);
+}
+
+function findPendingUser(session, message) {
+  const text = textContent(message?.content);
+  return [...session.messages].reverse().find((item) => item.role === "user" && item.pending && item.text === text);
+}
+
+function currentAssistant(session, wireMessage) {
+  let item = session.activeAssistantId
+    ? session.messages.find((message) => message.id === session.activeAssistantId)
+    : null;
+  if (!item) {
+    item = addMessage(session, { ...assistantFromWire(wireMessage), streaming: true, tools: [] });
+    session.activeAssistantId = item.id;
+  }
+  return item;
+}
+
+function updateAssistant(session, wireMessage, streaming) {
+  const item = currentAssistant(session, wireMessage);
+  const next = assistantFromWire(wireMessage);
+  item.text = next.text;
+  item.thinking = next.thinking;
+  item.model = next.model;
+  item.timestamp = next.timestamp;
+  item.streaming = streaming;
+  if (!streaming) {
+    session.activeAssistantId = null;
+  }
+  scheduleMessages(session);
+}
+
+function toolFor(session, frame) {
+  let tool = session.tools.get(frame.toolCallId);
+  if (!tool) {
+    tool = {
+      id: frame.toolCallId,
+      name: frame.toolName || "tool",
+      args: frame.args,
+      intent: frame.intent || "",
+      detail: summarize(frame.args, 700),
+      status: "running",
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    session.tools.set(tool.id, tool);
+    const assistant = currentAssistant(session, null);
+    assistant.tools.push(tool);
+  }
+  return tool;
+}
+
+function updateActivity(session, id, value) {
+  session.activities.set(id, { id, updatedAt: Date.now(), ...value });
+  renderActivity(session);
+}
+
+async function rpc(session, command) {
+  const response = await bridge.request(session.id, command);
+  if (!response.success) {
+    const error = new Error(response.error || `OMP command ${command.type} failed.`);
+    error.code = response.code;
+    throw error;
+  }
+  return response.data;
+}
+
+async function refreshState(session) {
+  if (!session || session.status === "exited") {
     return;
   }
   try {
-    await bridge.stopSession(session.id);
-    session.state = "exited";
-    session.exitLabel = "Stopped by user";
-    session.terminal.writeln("\r\n\x1b[90mOMP session stopped.\x1b[0m");
-    renderSessionList();
-    updateControls();
+    session.state = await rpc(session, { type: "get_state" });
+    if (session.state?.sessionName) {
+      session.title = session.state.sessionName;
+    }
+    renderState(session);
+    renderChatList();
+    updateChrome();
   } catch (error) {
     toast(cleanError(error), "error");
   }
 }
 
-async function closeSession(id) {
-  const session = sessions.get(id);
+function handleFrame(session, frame) {
   if (!session) {
     return;
   }
-  if (session.state !== "exited") {
-    try {
-      await bridge.stopSession(id);
-    } catch {
-      // Closing the local terminal remains valid after an external process exit.
+  switch (frame.type) {
+    case "available_commands_update":
+      session.commands = frame.commands || [];
+      renderPalette();
+      break;
+    case "agent_start":
+      session.status = "streaming";
+      if (session.state) session.state.isStreaming = true;
+      renderState(session);
+      renderChatList();
+      updateChrome();
+      break;
+    case "agent_end":
+      if (frame.isTerminal !== false) {
+        session.status = "ready";
+        if (session.state) session.state.isStreaming = false;
+        void refreshState(session);
+      }
+      renderState(session);
+      renderChatList();
+      updateChrome();
+      break;
+    case "message_start":
+      if (frame.message?.role === "user") {
+        const pending = findPendingUser(session, frame.message);
+        if (pending) {
+          pending.pending = false;
+          pending.timestamp = frame.message.timestamp || pending.timestamp;
+        } else {
+          addMessage(session, {
+            role: "user", text: textContent(frame.message.content), images: imageContent(frame.message.content),
+            timestamp: frame.message.timestamp,
+          });
+        }
+      } else if (frame.message?.role === "assistant") {
+        updateAssistant(session, frame.message, true);
+      }
+      break;
+    case "message_update":
+      updateAssistant(session, frame.message, true);
+      break;
+    case "message_end":
+      if (frame.message?.role === "assistant") {
+        updateAssistant(session, frame.message, false);
+      }
+      break;
+    case "tool_execution_start": {
+      const tool = toolFor(session, frame);
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.intent || tool.detail, status: "running" });
+      scheduleMessages(session);
+      break;
     }
-  }
-  session.state = "disposed";
-  session.terminal.dispose();
-  session.host.remove();
-  sessions.delete(id);
-
-  if (activeSessionId === id) {
-    const remaining = [...sessions.keys()];
-    activeSessionId = remaining.at(-1) || null;
-    if (activeSessionId) {
-      setActiveSession(activeSessionId);
+    case "tool_execution_update": {
+      const tool = toolFor(session, frame);
+      tool.detail = summarize(frame.partialResult, 900) || tool.detail;
+      tool.updatedAt = Date.now();
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.detail, status: "running" });
+      scheduleMessages(session);
+      break;
     }
+    case "tool_execution_end": {
+      const tool = toolFor(session, frame);
+      tool.detail = summarize(frame.result, 1800) || tool.detail;
+      tool.status = frame.isError ? "error" : "complete";
+      tool.updatedAt = Date.now();
+      updateActivity(session, tool.id, { kind: "tool", name: tool.name, detail: tool.detail, status: tool.status });
+      scheduleMessages(session);
+      break;
+    }
+    case "command_output":
+      addMessage(session, { role: "output", text: stripAnsi(frame.text), timestamp: Date.now() });
+      break;
+    case "notice":
+      addMessage(session, { role: "notice", text: frame.message || "", level: frame.level || "info", timestamp: Date.now() });
+      break;
+    case "stderr":
+      if (frame.text?.trim()) {
+        addMessage(session, { role: "notice", text: frame.text.trim(), level: "warning", timestamp: Date.now() });
+      }
+      break;
+    case "protocol_error":
+      addMessage(session, { role: "notice", text: frame.error, level: "error", timestamp: Date.now() });
+      break;
+    case "model_changed":
+    case "thinking_level_changed":
+    case "config_update":
+      void refreshState(session);
+      break;
+    case "session_info_update":
+      if (frame.title) session.title = frame.title;
+      renderChatList();
+      updateChrome();
+      break;
+    case "extension_ui_request":
+      handleExtensionRequest(session, frame);
+      break;
+    case "subagent_lifecycle":
+    case "subagent_progress":
+    case "subagent_event": {
+      const payload = frame.payload || {};
+      const id = payload.id || payload.agentId || payload.subagentId || `subagent-${Date.now()}`;
+      updateActivity(session, id, {
+        kind: "subagent",
+        name: payload.agent || payload.name || "Subagent",
+        detail: payload.description || payload.task || payload.status || "Working",
+        status: payload.status || "running",
+      });
+      break;
+    }
+    case "auto_compaction_start":
+      updateActivity(session, "compaction", { kind: "system", name: "Compacting context", detail: frame.action, status: "running" });
+      break;
+    case "auto_compaction_end":
+      updateActivity(session, "compaction", { kind: "system", name: "Context compacted", detail: frame.errorMessage || frame.action, status: frame.errorMessage ? "error" : "complete" });
+      void refreshState(session);
+      break;
+    case "auto_retry_start":
+      updateActivity(session, "retry", { kind: "system", name: `Retry ${frame.attempt}/${frame.maxAttempts}`, detail: frame.errorMessage, status: "running" });
+      break;
+    case "auto_retry_end":
+      updateActivity(session, "retry", { kind: "system", name: frame.success ? "Retry recovered" : "Retry failed", detail: frame.finalError || "", status: frame.success ? "complete" : "error" });
+      break;
+    case "todo_reminder":
+    case "todo_auto_clear":
+      void refreshState(session);
+      break;
+    default:
+      break;
   }
-  renderSessionList();
-  updateControls();
 }
 
-async function restartActiveSession() {
+function messageNode(item) {
+  const node = document.createElement("article");
+  node.dataset.messageId = item.id;
+  if (item.role === "output") {
+    node.className = "command-output markdown";
+    node.innerHTML = markdown(item.text);
+    return node;
+  }
+  if (item.role === "notice") {
+    node.className = `notice-message ${item.level || ""}`;
+    node.textContent = item.text;
+    return node;
+  }
+  node.className = `message ${item.role}`;
+  if (item.role !== "user") {
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
+    avatar.textContent = "π";
+    node.append(avatar);
+  }
+  const content = document.createElement("div");
+  content.className = "message-content";
+  const meta = document.createElement("div");
+  meta.className = "message-meta";
+  const author = document.createElement("strong");
+  author.textContent = item.role === "user" ? "You" : "OMP";
+  const time = document.createElement("span");
+  time.textContent = formatTime(item.timestamp);
+  meta.append(author, time);
+  const body = document.createElement("div");
+  body.className = "markdown";
+  content.append(meta, body);
+  node.append(content);
+  return node;
+}
+
+function patchMessage(node, item) {
+  if (item.role === "output" || item.role === "notice") {
+    const key = `${item.role}:${item.level}:${item.text}`;
+    if (node.dataset.renderKey !== key) {
+      if (item.role === "output") {
+        node.className = "command-output markdown";
+        node.innerHTML = markdown(item.text);
+      } else {
+        node.className = `notice-message ${item.level || ""}`;
+        node.textContent = item.text;
+      }
+      node.dataset.renderKey = key;
+    }
+    return;
+  }
+  node.className = `message ${item.role}${item.streaming ? " streaming" : ""}`;
+  const content = node.querySelector(".message-content");
+  const body = node.querySelector(".markdown");
+  const metaTime = node.querySelector(".message-meta span");
+  if (metaTime) metaTime.textContent = item.pending ? "Sending…" : formatTime(item.timestamp);
+  const key = `${item.text}\u0000${item.thinking}\u0000${item.images.join("\u0001")}\u0000${item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.detail}`).join("\u0001")}`;
+  if (node.dataset.renderKey === key) {
+    return;
+  }
+  body.innerHTML = markdown(item.text || (item.streaming ? "" : " "));
+  content.querySelector(".thinking-block")?.remove();
+  content.querySelector(".message-images")?.remove();
+  content.querySelector(".tool-list")?.remove();
+  if (item.thinking) {
+    const details = document.createElement("details");
+    details.className = "thinking-block";
+    const summary = document.createElement("summary");
+    summary.textContent = item.streaming ? "Thinking…" : "Reasoning";
+    const thinking = document.createElement("div");
+    thinking.className = "thinking-content";
+    thinking.textContent = item.thinking;
+    details.append(summary, thinking);
+    content.insertBefore(details, body);
+  }
+  if (item.images.length) {
+    const images = document.createElement("div");
+    images.className = "message-images";
+    for (const source of item.images) {
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = "Attached image";
+      image.style.cssText = "max-width:240px;max-height:180px;border-radius:8px;margin-top:8px;object-fit:cover";
+      images.append(image);
+    }
+    content.append(images);
+  }
+  if (item.tools.length) {
+    const list = document.createElement("div");
+    list.className = "tool-list";
+    for (const tool of item.tools) {
+      const card = document.createElement("details");
+      card.className = `tool-card ${tool.status}`;
+      const head = document.createElement("summary");
+      head.className = "tool-head";
+      const icon = document.createElement("span");
+      icon.className = "tool-icon";
+      icon.textContent = tool.status === "complete" ? "✓" : tool.status === "error" ? "!" : "›";
+      const name = document.createElement("strong");
+      name.textContent = tool.name;
+      const state = document.createElement("span");
+      state.textContent = tool.status;
+      head.append(icon, name, state);
+      const detail = document.createElement("pre");
+      detail.className = "tool-detail";
+      detail.textContent = tool.detail || tool.intent || "";
+      card.append(head, detail);
+      list.append(card);
+    }
+    content.append(list);
+  }
+  node.dataset.renderKey = key;
+}
+
+function scheduleMessages(session) {
+  if (session.renderScheduled) return;
+  session.renderScheduled = true;
+  requestAnimationFrame(() => {
+    session.renderScheduled = false;
+    if (session.id === activeSessionId) renderMessages(session);
+  });
+}
+
+function renderMessages(session) {
+  const nearBottom = elements.conversation.scrollHeight - elements.conversation.scrollTop - elements.conversation.clientHeight < 120;
+  const existing = new Map([...elements.message_list.children].map((node) => [node.dataset.messageId, node]));
+  for (const item of session.messages) {
+    let node = existing.get(item.id);
+    if (!node) {
+      node = messageNode(item);
+    }
+    patchMessage(node, item);
+    elements.message_list.append(node);
+    existing.delete(item.id);
+  }
+  for (const node of existing.values()) node.remove();
+  elements.welcome.classList.toggle("hidden", session.messages.length > 0);
+  if (nearBottom || session.status === "streaming") {
+    requestAnimationFrame(() => { elements.conversation.scrollTop = elements.conversation.scrollHeight; });
+  }
+}
+
+function renderChatList() {
+  elements.chat_list.replaceChildren();
+  for (const session of sessions.values()) {
+    const tab = document.createElement("div");
+    tab.className = `chat-tab${session.id === activeSessionId ? " active" : ""}${session.status === "exited" ? " exited" : ""}`;
+    tab.tabIndex = 0;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(session.id === activeSessionId));
+    const state = document.createElement("span");
+    state.className = "chat-tab-state";
+    const copy = document.createElement("span");
+    copy.className = "chat-tab-copy";
+    const title = document.createElement("strong");
+    title.textContent = session.title;
+    const detail = document.createElement("small");
+    detail.textContent = session.status === "streaming" ? "OMP is working" : session.status === "connecting" ? "Connecting" : session.status === "exited" ? "Disconnected" : leafName(session.cwd);
+    copy.append(title, detail);
+    const close = document.createElement("button");
+    close.className = "chat-close";
+    close.textContent = "×";
+    close.title = "Close chat";
+    close.addEventListener("click", (event) => { event.stopPropagation(); void closeChat(session.id); });
+    tab.append(state, copy, close);
+    tab.addEventListener("click", () => setActiveSession(session.id));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setActiveSession(session.id); }
+    });
+    elements.chat_list.append(tab);
+  }
+  elements.chat_count.textContent = String(sessions.size);
+}
+
+function renderState(session) {
+  if (!session || session.id !== activeSessionId) return;
+  const state = session.state || {};
+  const usage = state.contextUsage || {};
+  const percent = Math.max(0, Math.min(100, Number(usage.percent || 0)));
+  elements.context_percent.textContent = `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
+  elements.context_fill.style.width = `${percent}%`;
+  elements.context_tokens.textContent = `${Number(usage.tokens || 0).toLocaleString()} tokens`;
+  elements.context_window.textContent = usage.contextWindow ? `${Number(usage.contextWindow).toLocaleString()} window` : "— window";
+  elements.fast_toggle.classList.toggle("active", Boolean(state.fastModeEnabled));
+  elements.fast_toggle.disabled = session.status === "connecting";
+  elements.thinking_select.disabled = session.status === "connecting";
+  if (state.thinkingLevel) elements.thinking_select.value = state.thinkingLevel;
+  renderModelSelect(session);
+  renderTodos(state.todoPhases || []);
+  elements.activity_live.classList.toggle("active", session.status === "streaming");
+}
+
+function renderModelSelect(session) {
+  const current = session.state?.model;
+  const currentValue = current ? `${current.provider}\u0000${current.id}` : "";
+  const previous = elements.model_select.value;
+  elements.model_select.replaceChildren();
+  if (!session.models.length && current) session.models = [current];
+  for (const model of session.models) {
+    const option = document.createElement("option");
+    option.value = `${model.provider}\u0000${model.id}`;
+    option.textContent = `${model.name || model.id} · ${model.provider}`;
+    elements.model_select.append(option);
+  }
+  elements.model_select.disabled = !session.models.length || session.status === "connecting";
+  elements.model_select.value = currentValue || previous;
+}
+
+function renderTodos(phases) {
+  const tasks = phases.flatMap((phase) => phase.tasks || []);
+  elements.todo_count.textContent = String(tasks.length);
+  elements.plan_empty.hidden = tasks.length > 0;
+  elements.todo_list.replaceChildren();
+  for (const task of tasks) {
+    const item = document.createElement("div");
+    item.className = `todo-item ${task.status || "pending"}`;
+    const check = document.createElement("span");
+    check.className = "todo-check";
+    check.textContent = task.status === "completed" ? "✓" : task.status === "in_progress" ? "•" : "";
+    const text = document.createElement("span");
+    text.textContent = task.content;
+    item.append(check, text);
+    elements.todo_list.append(item);
+  }
+}
+
+function renderActivity(session) {
+  if (!session || session.id !== activeSessionId) return;
+  const items = [...session.activities.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
+  elements.activity_empty.hidden = items.length > 0;
+  elements.activity_list.replaceChildren();
+  for (const activity of items) {
+    const node = document.createElement("div");
+    node.className = "activity-item";
+    const head = document.createElement("div");
+    head.className = "activity-head";
+    const icon = document.createElement("span");
+    icon.className = "activity-icon";
+    icon.textContent = activity.kind === "subagent" ? "◆" : activity.kind === "system" ? "◫" : "›";
+    const name = document.createElement("strong");
+    name.textContent = activity.name;
+    const status = document.createElement("span");
+    status.textContent = activity.status;
+    head.append(icon, name, status);
+    const detail = document.createElement("p");
+    detail.textContent = activity.detail || "";
+    node.append(head, detail);
+    elements.activity_list.append(node);
+  }
+}
+
+function renderExtensionWidgets(session) {
+  if (!session || session.id !== activeSessionId) return;
+  elements.extension_widgets.replaceChildren();
+  for (const [key, lines] of session.extensionWidgets) {
+    const widget = document.createElement("div");
+    widget.className = "extension-widget";
+    widget.dataset.key = key;
+    widget.textContent = lines.join("\n");
+    elements.extension_widgets.append(widget);
+  }
+  elements.extension_section.hidden = session.extensionWidgets.size === 0;
+}
+
+function updateChrome() {
   const session = activeSession();
+  elements.new_chat.disabled = !runtimeAvailable || !workspace;
+  const connected = session && session.status !== "connecting" && session.status !== "exited";
+  const streaming = session?.status === "streaming";
+  const hasPrompt = elements.message_input.value.trim().length > 0 || attachments.length > 0;
+  elements.send_message.disabled = !connected || !hasPrompt;
+  elements.abort_generation.disabled = !streaming;
+  elements.attach_image.disabled = !connected;
+  elements.show_commands.disabled = !connected;
+  document.querySelectorAll(".quick-grid button").forEach((button) => { button.disabled = !connected; });
   if (!session) {
+    elements.active_title.textContent = "OMP";
+    elements.active_subtitle.textContent = "Start a chat to connect";
+    elements.window_title.textContent = "Chat workspace";
+    elements.connection_status.className = "";
+    elements.connection_status.lastChild.textContent = " Not connected";
+    elements.welcome.classList.remove("hidden");
+    elements.message_list.replaceChildren();
+    renderTodos([]);
+    elements.activity_list.replaceChildren();
+    elements.activity_empty.hidden = false;
+    elements.activity_live.classList.remove("active");
+    elements.context_percent.textContent = "0%";
+    elements.context_fill.style.width = "0%";
+    elements.context_tokens.textContent = "0 tokens";
+    elements.context_window.textContent = "— window";
+    elements.extension_section.hidden = true;
     return;
   }
-  const options = { cwd: session.cwd, args: session.args };
-  await closeSession(session.id);
-  await startSession(options);
+  elements.active_title.textContent = session.title;
+  elements.active_subtitle.textContent = session.cwd;
+  elements.window_title.textContent = `${session.title} — ${leafName(session.cwd)}`;
+  elements.connection_status.className = streaming ? "streaming" : connected ? "connected" : "";
+  elements.connection_status.lastChild.textContent = streaming ? " OMP is working" : session.status === "connecting" ? " Connecting…" : session.status === "exited" ? " Disconnected" : " Connected";
+  elements.queue_label.textContent = session.state?.queuedMessageCount ? `${session.state.queuedMessageCount} queued` : "";
+  renderState(session);
 }
 
-async function chooseWorkspace(startAfter = false) {
+function setActiveSession(id) {
+  const session = sessions.get(id);
+  if (!session) return;
+  activeSessionId = id;
+  renderChatList();
+  renderMessages(session);
+  renderState(session);
+  renderActivity(session);
+  renderExtensionWidgets(session);
+  renderPalette();
+  updateChrome();
+  elements.message_input.focus();
+}
+
+async function startChat({ initialMessage } = {}) {
+  if (!workspace) {
+    await chooseWorkspace();
+    if (!workspace) return null;
+  }
+  if (!runtimeAvailable) {
+    toast("OMP runtime is unavailable.", "error");
+    return null;
+  }
+  const id = crypto.randomUUID();
+  const args = elements.launch_args.value.trim();
+  const session = createSession(id, workspace, args);
+  setActiveSession(id);
+  renderChatList();
+  updateChrome();
+  try {
+    const result = await bridge.startChat({ id, cwd: workspace, args });
+    session.status = "ready";
+    session.startedAt = result.startedAt;
+    session.runtime = result.runtime;
+    const [state, commands, models, messages] = await Promise.all([
+      rpc(session, { type: "get_state" }),
+      rpc(session, { type: "get_available_commands" }),
+      rpc(session, { type: "get_available_models" }),
+      rpc(session, { type: "get_messages" }),
+      rpc(session, { type: "set_subagent_subscription", level: "events" }),
+    ]);
+    session.state = state;
+    session.commands = commands?.commands || session.commands;
+    session.models = models?.models || [];
+    appendHistory(session, messages?.messages || []);
+    renderChatList();
+    renderState(session);
+    renderPalette();
+    updateChrome();
+    if (initialMessage) {
+      elements.message_input.value = initialMessage;
+      autoSizeComposer();
+      await sendMessage();
+    }
+    return session;
+  } catch (error) {
+    session.status = "exited";
+    addMessage(session, { role: "notice", text: cleanError(error), level: "error" });
+    renderChatList();
+    updateChrome();
+    toast(cleanError(error), "error");
+    return null;
+  }
+}
+
+async function closeChat(id) {
+  const session = sessions.get(id);
+  if (!session) return;
+  try { await bridge.stopChat(id); } catch { /* Process already exited. */ }
+  sessions.delete(id);
+  if (activeSessionId === id) {
+    activeSessionId = [...sessions.keys()].at(-1) || null;
+  }
+  renderChatList();
+  if (activeSessionId) setActiveSession(activeSessionId);
+  else updateChrome();
+}
+
+async function sendMessage() {
+  let session = activeSession();
+  if (!session) {
+    session = await startChat();
+    if (!session) return;
+  }
+  const text = elements.message_input.value.trim();
+  if (!text && attachments.length === 0) return;
+  const sentAttachments = attachments;
+  const images = sentAttachments.map((item) => item.content);
+  addMessage(session, {
+    role: "user",
+    text,
+    images: sentAttachments.map((item) => item.preview),
+    timestamp: Date.now(),
+    pending: true,
+  });
+  elements.message_input.value = "";
+  attachments = [];
+  renderAttachments();
+  closePalette();
+  autoSizeComposer();
+  updateChrome();
+  try {
+    const data = await rpc(session, {
+      type: "prompt",
+      message: text,
+      ...(images.length ? { images } : {}),
+      ...(session.status === "streaming" ? { streamingBehavior: "followUp" } : {}),
+    });
+    if (data?.agentInvoked === false) {
+      const pending = [...session.messages].reverse().find((item) => item.role === "user" && item.pending);
+      if (pending) pending.pending = false;
+      session.status = "ready";
+      scheduleMessages(session);
+      void refreshState(session);
+    }
+  } catch (error) {
+    const pending = [...session.messages].reverse().find((item) => item.role === "user" && item.pending);
+    if (pending) pending.pending = false;
+    addMessage(session, { role: "notice", text: cleanError(error), level: "error" });
+    toast(cleanError(error), "error");
+  }
+}
+
+async function runSlashCommand(command) {
+  if (!activeSession()) await startChat();
+  if (!activeSession()) return;
+  elements.message_input.value = command;
+  autoSizeComposer();
+  await sendMessage();
+}
+
+function matchingCommands() {
+  const session = activeSession();
+  if (!session) return [];
+  const value = elements.message_input.value.trimStart();
+  const query = value.startsWith("/") ? value.slice(1).split(/\s/u, 1)[0].toLowerCase() : "";
+  return session.commands
+    .filter((command) => !query || command.name.toLowerCase().includes(query) || command.aliases?.some((alias) => alias.toLowerCase().includes(query)))
+    .slice(0, 80);
+}
+
+function renderPalette() {
+  if (elements.command_palette.hidden) return;
+  const commands = matchingCommands();
+  paletteSelection = Math.max(0, Math.min(paletteSelection, commands.length - 1));
+  elements.palette_results.replaceChildren();
+  commands.forEach((command, index) => {
+    const item = document.createElement("button");
+    item.className = `palette-item${index === paletteSelection ? " selected" : ""}`;
+    const name = document.createElement("strong");
+    name.textContent = `/${command.name}`;
+    const description = document.createElement("span");
+    description.textContent = command.description || command.input?.hint || "OMP command";
+    const source = document.createElement("small");
+    source.textContent = command.source || "builtin";
+    item.append(name, description, source);
+    item.addEventListener("click", () => selectCommand(command));
+    elements.palette_results.append(item);
+  });
+  if (!commands.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-widget";
+    empty.textContent = "No matching commands";
+    elements.palette_results.append(empty);
+  }
+}
+
+function openPalette() {
+  if (!activeSession()) return;
+  paletteSelection = 0;
+  elements.command_palette.hidden = false;
+  renderPalette();
+  elements.message_input.focus();
+}
+
+function closePalette() {
+  elements.command_palette.hidden = true;
+}
+
+function selectCommand(command) {
+  closePalette();
+  const slash = `/${command.name}`;
+  if (command.input?.hint) {
+    elements.message_input.value = `${slash} `;
+    autoSizeComposer();
+    elements.message_input.focus();
+    updateChrome();
+  } else {
+    void runSlashCommand(slash);
+  }
+}
+
+async function chooseWorkspace() {
   try {
     const directory = await bridge.chooseWorkspace();
-    if (!directory) {
-      return;
-    }
-    setWorkspace(directory);
-    if (startAfter) {
-      await startSession({ cwd: directory });
+    if (directory) setWorkspace(directory);
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+function renderAttachments() {
+  elements.attachment_list.replaceChildren();
+  attachments.forEach((attachment, index) => {
+    const chip = document.createElement("div");
+    chip.className = "attachment-chip";
+    chip.title = attachment.name;
+    const image = document.createElement("img");
+    image.src = attachment.preview;
+    image.alt = attachment.name;
+    const remove = document.createElement("button");
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      attachments.splice(index, 1);
+      renderAttachments();
+      updateChrome();
+    });
+    chip.append(image, remove);
+    elements.attachment_list.append(chip);
+  });
+}
+
+async function attachImage() {
+  try {
+    const attachment = await bridge.chooseAttachment();
+    if (attachment) {
+      attachments.push(attachment);
+      renderAttachments();
+      updateChrome();
     }
   } catch (error) {
     toast(cleanError(error), "error");
   }
 }
 
-function handleExit({ id, exitCode, signal }) {
-  const session = sessions.get(id);
-  if (!session || session.state === "disposed") {
-    return;
-  }
-  session.state = "exited";
-  session.exitLabel = signal
-    ? `OMP exited after signal ${signal}`
-    : `OMP exited with code ${exitCode}`;
-  session.terminal.writeln(`\r\n\x1b[90m${session.exitLabel}.\x1b[0m`);
-  renderSessionList();
-  updateControls();
+function autoSizeComposer() {
+  elements.message_input.style.height = "auto";
+  elements.message_input.style.height = `${Math.min(180, elements.message_input.scrollHeight)}px`;
 }
 
-function handleCommand(command) {
-  if (command === "new-session") {
-    void startSession();
-  } else if (command === "open-workspace") {
-    void chooseWorkspace(false);
-  } else if (command === "close-session" && activeSessionId) {
-    void closeSession(activeSessionId);
-  } else if (command === "restart-session") {
-    void restartActiveSession();
+async function setModel() {
+  const session = activeSession();
+  if (!session) return;
+  const [provider, modelId] = elements.model_select.value.split("\u0000");
+  try {
+    const model = await rpc(session, { type: "set_model", provider, modelId });
+    if (session.state) session.state.model = model;
+    renderState(session);
+  } catch (error) {
+    toast(cleanError(error), "error");
+    renderState(session);
   }
+}
+
+async function setThinking() {
+  const session = activeSession();
+  if (!session) return;
+  try {
+    await rpc(session, { type: "set_thinking_level", level: elements.thinking_select.value });
+    if (session.state) session.state.thinkingLevel = elements.thinking_select.value;
+  } catch (error) {
+    toast(cleanError(error), "error");
+    renderState(session);
+  }
+}
+
+async function toggleFast() {
+  const session = activeSession();
+  if (!session) return;
+  try {
+    const result = await rpc(session, { type: "set_fast_mode", enabled: !session.state?.fastModeEnabled });
+    session.state.fastModeEnabled = result.enabled;
+    session.state.fastModeActive = result.active;
+    renderState(session);
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+async function abortGeneration() {
+  const session = activeSession();
+  if (!session || session.status !== "streaming") return;
+  try {
+    await rpc(session, { type: "abort" });
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+async function compactContext() {
+  const session = activeSession();
+  if (!session) return;
+  updateActivity(session, "compaction", { kind: "system", name: "Compacting context", detail: "Requested from desktop", status: "running" });
+  try {
+    await rpc(session, { type: "compact" });
+    toast("Context compacted.");
+    void refreshState(session);
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+async function resumeSession() {
+  const session = activeSession();
+  if (!session || session.status === "streaming") return;
+  try {
+    const sessionPath = await bridge.chooseSession();
+    if (!sessionPath) return;
+    const result = await rpc(session, { type: "switch_session", sessionPath });
+    if (result?.cancelled) return;
+    session.activeAssistantId = null;
+    session.tools.clear();
+    session.activities.clear();
+    const [state, messages] = await Promise.all([
+      rpc(session, { type: "get_state" }),
+      rpc(session, { type: "get_messages" }),
+    ]);
+    session.state = state;
+    session.title = state.sessionName || leafName(sessionPath).replace(/\.jsonl$/u, "");
+    appendHistory(session, messages?.messages || []);
+    renderChatList();
+    renderState(session);
+    renderActivity(session);
+    updateChrome();
+    toast("Session resumed.");
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+function sendModalResponse(frame) {
+  if (!activeModal) return;
+  bridge.sendFrame(activeModal.sessionId, { type: "extension_ui_response", id: activeModal.frame.id, ...frame });
+  hideModal();
+}
+
+function hideModal(cancelled = false) {
+  if (cancelled && activeModal) {
+    bridge.sendFrame(activeModal.sessionId, { type: "extension_ui_response", id: activeModal.frame.id, cancelled: true });
+  }
+  activeModal = null;
+  elements.modal_backdrop.hidden = true;
+  elements.modal_content.replaceChildren();
+  elements.modal_actions.replaceChildren();
+}
+
+function actionButton(label, callback, primary = false) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  if (primary) button.className = "primary";
+  button.addEventListener("click", callback);
+  return button;
+}
+
+function handleExtensionRequest(session, frame) {
+  if (frame.method === "notify") {
+    toast(frame.message, frame.notifyType || "info");
+    return;
+  }
+  if (frame.method === "setStatus") {
+    if (frame.statusText) session.extensionStatus.set(frame.statusKey, frame.statusText);
+    else session.extensionStatus.delete(frame.statusKey);
+    updateChrome();
+    return;
+  }
+  if (frame.method === "setWidget") {
+    if (frame.widgetLines) session.extensionWidgets.set(frame.widgetKey, frame.widgetLines);
+    else session.extensionWidgets.delete(frame.widgetKey);
+    renderExtensionWidgets(session);
+    return;
+  }
+  if (frame.method === "setTitle") {
+    if (frame.title) session.title = frame.title;
+    renderChatList();
+    updateChrome();
+    return;
+  }
+  if (frame.method === "set_editor_text") {
+    elements.message_input.value = frame.text || "";
+    autoSizeComposer();
+    updateChrome();
+    return;
+  }
+  if (frame.method === "open_url") {
+    void bridge.openExternal(frame.url).catch((error) => toast(cleanError(error), "error"));
+    if (frame.instructions) toast(frame.instructions);
+    return;
+  }
+  if (frame.method === "cancel") {
+    if (activeModal?.frame.id === frame.targetId) hideModal(false);
+    return;
+  }
+
+  activeModal = { sessionId: session.id, frame };
+  elements.modal_backdrop.hidden = false;
+  elements.modal_title.textContent = frame.title || "OMP requests input";
+  elements.modal_message.textContent = frame.message || "";
+  elements.modal_message.hidden = !frame.message;
+  elements.modal_content.replaceChildren();
+  elements.modal_actions.replaceChildren();
+
+  if (frame.method === "select") {
+    frame.options.forEach((option, index) => {
+      const button = document.createElement("button");
+      button.className = "modal-option";
+      const label = document.createElement("strong");
+      label.textContent = option;
+      const detail = document.createElement("span");
+      detail.textContent = frame.optionDetails?.[index]?.description || "";
+      button.append(label, detail);
+      button.addEventListener("click", () => sendModalResponse({ value: option }));
+      elements.modal_content.append(button);
+    });
+    elements.modal_actions.append(actionButton("Cancel", () => hideModal(true)));
+  } else if (frame.method === "confirm") {
+    elements.modal_actions.append(
+      actionButton("Cancel", () => sendModalResponse({ confirmed: false })),
+      actionButton("Continue", () => sendModalResponse({ confirmed: true }), true),
+    );
+  } else if (frame.method === "input" || frame.method === "editor") {
+    const input = document.createElement(frame.method === "editor" ? "textarea" : "input");
+    input.className = "modal-input";
+    input.placeholder = frame.placeholder || "";
+    input.value = frame.prefill || "";
+    elements.modal_content.append(input);
+    elements.modal_actions.append(
+      actionButton("Cancel", () => hideModal(true)),
+      actionButton("Submit", () => sendModalResponse({ value: input.value }), true),
+    );
+    requestAnimationFrame(() => input.focus());
+  }
+}
+
+function handleAppCommand(command) {
+  if (command === "new-chat") void startChat();
+  else if (command === "open-workspace") void chooseWorkspace();
+  else if (command === "command-palette") openPalette();
+  else if (command === "focus-composer") elements.message_input.focus();
+  else if (command === "abort") void abortGeneration();
 }
 
 async function initialize() {
-  if (!bridge) {
-    elements.runtimePill.className = "runtime-pill error";
-    elements.runtimeLabel.textContent = "Desktop bridge unavailable";
-    setStatus("Launch this interface through Electron", "error");
-    return;
-  }
-
-  disposables.push(bridge.onData(({ id, data }) => sessions.get(id)?.terminal.write(data)));
-  disposables.push(bridge.onExit(handleExit));
-  disposables.push(bridge.onCommand(handleCommand));
-
+  if (!bridge) return;
+  disposables.push(bridge.onChatEvent(({ sessionId, frame }) => handleFrame(sessions.get(sessionId), frame)));
+  disposables.push(bridge.onChatExit(({ sessionId, expected }) => {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    session.status = "exited";
+    if (!expected) addMessage(session, { role: "notice", text: "OMP disconnected.", level: "error" });
+    renderChatList();
+    updateChrome();
+  }));
+  disposables.push(bridge.onCommand(handleAppCommand));
   try {
     const runtime = await bridge.runtimeInfo();
     runtimeAvailable = runtime.available;
-    elements.runtimePill.className = `runtime-pill ${runtime.available ? "ready" : "error"}`;
-    elements.runtimeLabel.textContent = runtime.available ? runtime.label : "OMP runtime missing";
-    elements.runtimePill.title = runtime.available ? `${runtime.label} · ${runtime.targetKey}` : runtime.message;
-    if (!runtime.available) {
-      toast(runtime.message, "error");
-    }
+    elements.runtime_pill.className = `runtime-pill ${runtime.available ? "ready" : "error"}`;
+    elements.runtime_label.textContent = runtime.available ? runtime.label : "OMP runtime missing";
+    elements.runtime_pill.title = runtime.available ? `${runtime.label} · ${runtime.targetKey}` : runtime.message;
+    if (!runtime.available) toast(runtime.message, "error");
   } catch (error) {
-    runtimeAvailable = false;
-    elements.runtimePill.className = "runtime-pill error";
-    elements.runtimeLabel.textContent = "Runtime check failed";
+    elements.runtime_pill.className = "runtime-pill error";
+    elements.runtime_label.textContent = "Runtime check failed";
     toast(cleanError(error), "error");
   }
-
   if (!workspace) {
-    try {
-      workspace = await bridge.initialWorkspace();
-    } catch {
-      workspace = "";
-    }
+    try { workspace = await bridge.initialWorkspace(); } catch { workspace = ""; }
   }
   setWorkspace(workspace);
-  elements.launchArgs.value = localStorage.getItem("ompDesktop.launchArgs") || "";
-  updateControls();
+  elements.launch_args.value = localStorage.getItem("ompDesktop.launchArgs") || "";
+  updateChrome();
+  if (runtimeAvailable && workspace) void startChat();
 }
 
-elements.chooseWorkspace.addEventListener("click", () => void chooseWorkspace(false));
-elements.openWorkspaceFolder.addEventListener("click", () => {
-  if (workspace) {
-    void bridge.openWorkspace(workspace).catch((error) => toast(cleanError(error), "error"));
-  }
+elements.choose_workspace.addEventListener("click", () => void chooseWorkspace());
+elements.open_workspace_folder.addEventListener("click", () => {
+  if (workspace) void bridge.openWorkspace(workspace).catch((error) => toast(cleanError(error), "error"));
 });
-elements.newSession.addEventListener("click", () => void startSession());
-elements.emptyStart.addEventListener("click", () => void startSession());
-elements.stopSession.addEventListener("click", () => void stopActiveSession());
-elements.restartSession.addEventListener("click", () => void restartActiveSession());
-elements.copyOutput.addEventListener("click", () => void copySelection());
-elements.docsLink.addEventListener("click", (event) => {
+elements.new_chat.addEventListener("click", () => void startChat());
+elements.open_command_palette.addEventListener("click", openPalette);
+elements.show_commands.addEventListener("click", openPalette);
+elements.attach_image.addEventListener("click", () => void attachImage());
+elements.send_message.addEventListener("click", () => void sendMessage());
+elements.abort_generation.addEventListener("click", () => void abortGeneration());
+elements.model_select.addEventListener("change", () => void setModel());
+elements.thinking_select.addEventListener("change", () => void setThinking());
+elements.fast_toggle.addEventListener("click", () => void toggleFast());
+elements.launch_args.addEventListener("change", () => {
+  localStorage.setItem("ompDesktop.launchArgs", elements.launch_args.value.trim());
+});
+elements.docs_link.addEventListener("click", (event) => {
   event.preventDefault();
-  void bridge.openExternal(elements.docsLink.href);
+  void bridge.openExternal(elements.docs_link.href);
 });
-elements.launchArgs.addEventListener("change", () => {
-  localStorage.setItem("ompDesktop.launchArgs", elements.launchArgs.value.trim());
+elements.modal_close.addEventListener("click", () => hideModal(true));
+elements.modal_backdrop.addEventListener("click", (event) => {
+  if (event.target === elements.modal_backdrop) hideModal(true);
 });
-
-const resizeObserver = new ResizeObserver(() => fitSession(activeSession()));
-resizeObserver.observe(elements.terminalStack);
-window.addEventListener("beforeunload", () => {
-  resizeObserver.disconnect();
-  for (const dispose of disposables) {
-    dispose();
+elements.message_input.addEventListener("input", () => {
+  autoSizeComposer();
+  if (elements.message_input.value.trimStart().startsWith("/")) openPalette();
+  else if (!elements.command_palette.hidden) closePalette();
+  renderPalette();
+  updateChrome();
+});
+elements.message_input.addEventListener("keydown", (event) => {
+  if (!elements.command_palette.hidden) {
+    const commands = matchingCommands();
+    if (event.key === "ArrowDown") { event.preventDefault(); paletteSelection = Math.min(commands.length - 1, paletteSelection + 1); renderPalette(); return; }
+    if (event.key === "ArrowUp") { event.preventDefault(); paletteSelection = Math.max(0, paletteSelection - 1); renderPalette(); return; }
+    if (event.key === "Enter" && !event.shiftKey && commands[paletteSelection]) { event.preventDefault(); selectCommand(commands[paletteSelection]); return; }
+    if (event.key === "Escape") { event.preventDefault(); closePalette(); return; }
   }
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
 });
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openPalette(); }
+  else if (event.key === "Escape" && elements.command_palette.hidden && elements.modal_backdrop.hidden) void abortGeneration();
+});
+document.addEventListener("click", (event) => {
+  const starter = event.target.closest("[data-starter]");
+  if (starter) {
+    elements.message_input.value = starter.dataset.starter;
+    autoSizeComposer();
+    updateChrome();
+    elements.message_input.focus();
+  }
+  const command = event.target.closest("[data-command]");
+  if (command) void runSlashCommand(command.dataset.command);
+  const action = event.target.closest("[data-action]");
+  if (action?.dataset.action === "compact") void compactContext();
+  else if (action?.dataset.action === "resume") void resumeSession();
+  const link = event.target.closest(".markdown a");
+  if (link) { event.preventDefault(); void bridge.openExternal(link.href); }
+});
+window.addEventListener("beforeunload", () => { for (const dispose of disposables) dispose(); });
 
 void initialize();

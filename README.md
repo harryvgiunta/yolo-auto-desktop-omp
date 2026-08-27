@@ -34,14 +34,15 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
 
 ## YOLO Auto Desktop OMP
 
-This fork adds a native Electron desktop shell in [`apps/desktop`](apps/desktop). It runs the official OMP binary inside a real PTY instead of reimplementing the agent, so the complete TUI remains available: every provider, model, tool, slash command, session, subagent, LSP operation, debugger operation, and keyboard shortcut.
+This fork adds a native Electron chat client in [`apps/desktop`](apps/desktop). It runs the official OMP binary in RPC v2 mode and renders the agent as a desktop conversation instead of embedding the terminal UI. The runtime remains OMP itself, so providers, models, tools, slash commands, sessions, subagents, LSP operations, and debugger operations stay wired into the same agent.
 
 Desktop additions:
 
-- workspace picker and per-project launch arguments;
-- multiple concurrent OMP sessions with native terminal tabs;
-- restart, stop, copy, paste, resize, and process lifecycle handling;
-- sandboxed renderer with a narrow IPC preload bridge;
+- streaming Markdown chat with reasoning and expandable tool-activity cards;
+- searchable slash-command palette plus one-click resume, compact, review, tools, usage, and MCP widgets;
+- model, thinking-level, fast-mode, context, todo-plan, extension-widget, and subagent controls;
+- workspace picker, image attachments, session resume, and multiple concurrent chats;
+- protocol-v2 chunk reassembly and extension input dialogs over a sandboxed IPC bridge;
 - checksum-verified OMP runtimes for Windows, macOS, and Linux;
 - Electron Builder targets for installers and portable packages.
 
