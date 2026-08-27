@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
@@ -70,6 +71,60 @@ function activeRuntime() {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
   });
+}
+
+function runOmpCommand(args, cwd) {
+  const runtime = activeRuntime();
+  if (!runtime.available) {
+    return Promise.reject(new Error(runtime.message));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(runtime.command, [...runtime.args, ...args], {
+      cwd,
+      env: { ...process.env, PWD: cwd, TERM: "dumb", NO_COLOR: "1" },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const stdout = [];
+    const stderr = [];
+    let bytes = 0;
+    const collect = (target) => (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 16_777_216) {
+        child.kill();
+        reject(new Error("OMP configuration output exceeded 16 MiB."));
+        return;
+      }
+      target.push(chunk);
+    };
+    child.stdout.on("data", collect(stdout));
+    child.stderr.on("data", collect(stderr));
+    child.once("error", reject);
+    child.once("exit", (exitCode, signal) => {
+      const output = Buffer.concat(stdout).toString("utf8").trim();
+      const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
+      if (exitCode === 0) {
+        resolve({ stdout: output, stderr: errorOutput });
+      } else {
+        reject(
+          new Error(
+            errorOutput ||
+              output ||
+              (signal ? `OMP config exited after signal ${signal}.` : `OMP config exited with code ${exitCode}.`),
+          ),
+        );
+      }
+    });
+  });
+}
+
+function configurationWorkspace(candidate) {
+  return candidate ? workspaceDirectory(candidate) : app.getPath("home");
+}
+
+function validConfigurationKey(key) {
+  return typeof key === "string" && key.length <= 256 && /^[A-Za-z0-9_.-]+$/u.test(key);
 }
 
 function send(channel, payload) {
@@ -272,6 +327,44 @@ function registerIpc() {
         }
       : runtime;
   });
+  ipcMain.handle("configuration:list", async (_event, cwd) => {
+    const directory = configurationWorkspace(cwd);
+    const [{ stdout }, { stdout: configDirectory }] = await Promise.all([
+      runOmpCommand(["config", "list", "--json"], directory),
+      runOmpCommand(["config", "path"], directory),
+    ]);
+    try {
+      return { settings: JSON.parse(stdout), configDirectory };
+    } catch {
+      throw new Error("OMP returned invalid JSON for its configuration schema.");
+    }
+  });
+  ipcMain.handle("configuration:set", async (_event, payload) => {
+    if (!validConfigurationKey(payload?.key)) {
+      throw new Error("Invalid OMP configuration key.");
+    }
+    if (typeof payload.value !== "string" || payload.value.length > 262_144) {
+      throw new Error("OMP configuration value is invalid or too large.");
+    }
+    const directory = configurationWorkspace(payload.cwd);
+    await runOmpCommand(["config", "set", payload.key, payload.value, "--json"], directory);
+    return true;
+  });
+  ipcMain.handle("configuration:reset", async (_event, payload) => {
+    if (!validConfigurationKey(payload?.key)) {
+      throw new Error("Invalid OMP configuration key.");
+    }
+    const directory = configurationWorkspace(payload.cwd);
+    await runOmpCommand(["config", "reset", payload.key, "--json"], directory);
+    return true;
+  });
+  ipcMain.handle("configuration:open-folder", async (_event, cwd) => {
+    const directory = configurationWorkspace(cwd);
+    const { stdout: configDirectory } = await runOmpCommand(["config", "path"], directory);
+    const error = await shell.openPath(configDirectory);
+    if (error) throw new Error(error);
+    return true;
+  });
   ipcMain.handle("workspace:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Choose an OMP workspace",
@@ -338,6 +431,11 @@ function installMenu() {
           label: "Open Workspace…",
           accelerator: "CmdOrCtrl+Shift+O",
           click: () => send("app:command", "open-workspace"),
+        },
+        {
+          label: "Settings…",
+          accelerator: "CmdOrCtrl+,",
+          click: () => send("app:command", "open-settings"),
         },
         { type: "separator" },
         ...(process.platform === "darwin" ? [] : [{ role: "quit" }]),

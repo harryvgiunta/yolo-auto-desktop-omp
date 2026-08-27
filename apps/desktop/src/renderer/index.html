@@ -83,6 +83,7 @@
                 </select>
               </label>
               <button class="fast-toggle" id="fast-toggle" disabled><span class="toggle-dot"></span> Fast</button>
+              <button class="settings-trigger" id="open-settings" title="Open settings">Settings</button>
               <button class="stop-button" id="abort-generation" disabled>Stop</button>
             </div>
           </div>
@@ -166,6 +167,79 @@
           </section>
         </aside>
       </div>
+    </div>
+
+    <div class="settings-backdrop" id="settings-backdrop" hidden>
+      <section class="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="settings-header">
+          <div>
+            <span class="settings-kicker">Oh My Pi configuration</span>
+            <h2 id="settings-title">Settings</h2>
+            <p id="settings-path">Loading effective configuration…</p>
+          </div>
+          <div class="settings-header-actions">
+            <button id="settings-open-folder">Open config folder</button>
+            <button id="settings-close" aria-label="Close settings">×</button>
+          </div>
+        </header>
+        <div class="settings-layout">
+          <nav class="settings-nav" aria-label="Settings sections">
+            <button class="active" data-settings-tab="models"><span>◈</span><strong>Models</strong><small>Active model and roles</small></button>
+            <button data-settings-tab="runtime"><span>▶</span><strong>Runtime</strong><small>Live session behavior</small></button>
+            <button data-settings-tab="configuration"><span>⌘</span><strong>All configuration</strong><small>Every OMP setting</small></button>
+          </nav>
+          <div class="settings-content">
+            <section class="settings-panel active" data-settings-panel="models">
+              <div class="settings-panel-heading">
+                <div><h3>Models</h3><p>Change the active chat model or assign persistent models to every OMP role.</p></div>
+              </div>
+              <div class="settings-subsection active-model-settings">
+                <h4>Current chat</h4>
+                <div class="settings-control-grid">
+                  <label><span>Active model</span><select id="settings-active-model"></select></label>
+                  <label><span>Thinking level</span><select id="settings-active-thinking">
+                    <option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option>
+                  </select></label>
+                </div>
+              </div>
+              <div class="settings-subsection">
+                <div class="subsection-heading"><div><h4>Model roles</h4><p>Roles select models for planning, subagents, reviews, vision, commits, and fast paths.</p></div><button id="roles-reset">Reset roles</button></div>
+                <div class="role-model-list" id="role-model-list"></div>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="runtime">
+              <div class="settings-panel-heading"><div><h3>Runtime</h3><p>Controls below apply immediately to the active RPC session.</p></div></div>
+              <div class="runtime-settings-grid">
+                <label><span>Steering queue</span><select id="settings-steering"><option value="one-at-a-time">One at a time</option><option value="all">All messages</option></select><small>How steering messages are consumed.</small></label>
+                <label><span>Follow-up queue</span><select id="settings-follow-up"><option value="one-at-a-time">One at a time</option><option value="all">All messages</option></select><small>How queued follow-ups are consumed.</small></label>
+                <label><span>Interrupt behavior</span><select id="settings-interrupt"><option value="immediate">Immediate</option><option value="wait">Wait for turn</option></select><small>When steering may interrupt tools.</small></label>
+              </div>
+              <div class="runtime-switch-list">
+                <button id="settings-fast-mode"><span><strong>Fast mode</strong><small>Use provider priority service tiers where supported.</small></span><i></i></button>
+                <button id="settings-auto-compaction"><span><strong>Automatic compaction</strong><small>Compact context automatically near the configured threshold.</small></span><i></i></button>
+              </div>
+              <div class="runtime-actions">
+                <button id="settings-compact-now">Compact context now</button>
+                <button id="settings-new-chat">Start a new chat</button>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="configuration">
+              <div class="settings-panel-heading">
+                <div><h3>All configuration</h3><p>Complete effective schema from <code>omp config list --json</code>. Saves are validated and written by OMP.</p></div>
+                <button id="settings-reload">Reload</button>
+              </div>
+              <div class="configuration-toolbar">
+                <input id="settings-search" type="search" placeholder="Search every setting…" />
+                <select id="settings-category"><option value="">All categories</option></select>
+                <span id="settings-count">0 settings</span>
+              </div>
+              <div class="configuration-list" id="configuration-list"></div>
+            </section>
+          </div>
+        </div>
+      </section>
     </div>
 
     <div class="modal-backdrop" id="modal-backdrop" hidden>

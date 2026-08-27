@@ -11,10 +11,14 @@ const elements = Object.fromEntries(
     "connection-status", "context-fill", "context-percent", "context-tokens", "context-window", "conversation",
     "docs-link", "extension-section", "extension-widgets", "fast-toggle", "launch-args", "message-input",
     "message-list", "modal-actions", "modal-backdrop", "modal-close", "modal-content", "modal-message", "modal-title",
-    "model-select", "new-chat", "open-command-palette", "open-workspace-folder", "palette-results", "phase-list",
-    "plan-count", "plan-section", "queue-label", "runtime-label", "runtime-pill", "send-message", "show-commands",
-    "thinking-select", "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title",
-    "workspace-name", "workspace-path",
+    "model-select", "new-chat", "open-command-palette", "open-settings", "open-workspace-folder", "palette-results",
+    "phase-list", "plan-count", "plan-section", "queue-label", "role-model-list", "roles-reset", "runtime-label",
+    "runtime-pill", "send-message", "settings-active-model", "settings-active-thinking", "settings-auto-compaction",
+    "settings-backdrop", "settings-category", "settings-close", "settings-compact-now", "settings-count",
+    "settings-fast-mode", "settings-follow-up", "settings-interrupt", "settings-new-chat", "settings-open-folder",
+    "settings-path", "settings-reload", "settings-search", "settings-steering", "show-commands", "thinking-select",
+    "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title", "workspace-name",
+    "workspace-path", "configuration-list",
   ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]),
 );
 
@@ -27,6 +31,22 @@ let attachments = [];
 let paletteSelection = 0;
 let activeModal = null;
 let nextChatNumber = 1;
+
+const MODEL_ROLES = [
+  { id: "default", name: "Default", description: "Primary chat model" },
+  { id: "smol", name: "Fast", description: "Quick and inexpensive work" },
+  { id: "slow", name: "Thinking", description: "Deep reasoning work" },
+  { id: "vision", name: "Vision", description: "Image understanding" },
+  { id: "plan", name: "Architect", description: "Planning and design" },
+  { id: "designer", name: "Designer", description: "UI and visual work" },
+  { id: "commit", name: "Commit", description: "Commit generation" },
+  { id: "tiny", name: "Tiny", description: "Titles and classifiers" },
+  { id: "task", name: "Subtask", description: "General subagents" },
+  { id: "advisor", name: "Advisor", description: "Passive review model" },
+];
+const THINKING_LEVELS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+let configuration = null;
+let configurationDirectory = "";
 
 function leafName(filePath) {
   const normalized = filePath.replace(/[\\/]+$/u, "");
@@ -119,6 +139,7 @@ function formatTime(timestamp) {
 }
 
 function setWorkspace(directory) {
+  if (workspace !== directory) configuration = null;
   workspace = directory;
   if (directory) {
     localStorage.setItem("ompDesktop.workspace", directory);
@@ -654,6 +675,10 @@ function renderState(session) {
   renderModelSelect(session);
   renderTodos(state.todoPhases || []);
   elements.activity_live.classList.toggle("active", session.status === "streaming");
+  if (settingsAreOpen()) {
+    renderSettingsModels();
+    renderSettingsRuntime();
+  }
 }
 
 function renderModelSelect(session) {
@@ -991,6 +1016,10 @@ function dismissTopLayer() {
     elements.message_input.focus();
     return true;
   }
+  if (settingsAreOpen()) {
+    closeSettings();
+    return true;
+  }
   if (!elements.command_palette.hidden) {
     closePalette();
     elements.message_input.focus();
@@ -1085,6 +1114,7 @@ async function setThinking() {
   try {
     await rpc(session, { type: "set_thinking_level", level: elements.thinking_select.value });
     if (session.state) session.state.thinkingLevel = elements.thinking_select.value;
+    renderState(session);
   } catch (error) {
     toast(cleanError(error), "error");
     renderState(session);
@@ -1150,6 +1180,370 @@ async function resumeSession() {
     renderActivity(session);
     updateChrome();
     toast("Session resumed.");
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+}
+
+function settingsAreOpen() {
+  return !elements.settings_backdrop.hidden;
+}
+
+function showSettingsTab(tab) {
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.settingsTab === tab);
+  });
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.settingsPanel === tab);
+  });
+}
+
+function closeSettings() {
+  elements.settings_backdrop.hidden = true;
+  elements.message_input.focus();
+}
+
+async function openSettings(tab = "models") {
+  closePalette();
+  elements.settings_backdrop.hidden = false;
+  showSettingsTab(tab);
+  renderSettingsModels();
+  renderSettingsRuntime();
+  if (!configuration) {
+    await loadConfiguration();
+  } else {
+    renderConfiguration();
+  }
+}
+
+async function loadConfiguration(force = false) {
+  if (configuration && !force) return;
+  elements.settings_path.textContent = "Loading effective OMP configuration…";
+  elements.configuration_list.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "config-empty";
+  loading.textContent = "Loading every OMP setting…";
+  elements.configuration_list.append(loading);
+  try {
+    const result = await bridge.loadConfiguration(workspace);
+    configuration = result.settings || {};
+    configurationDirectory = result.configDirectory || "";
+    elements.settings_path.textContent = `${Object.keys(configuration).length.toLocaleString()} effective settings · ${configurationDirectory}`;
+    renderConfigurationCategories();
+    renderConfiguration();
+    renderSettingsModels();
+    renderSettingsRuntime();
+  } catch (error) {
+    elements.settings_path.textContent = "Configuration unavailable";
+    elements.configuration_list.replaceChildren();
+    const failure = document.createElement("div");
+    failure.className = "config-empty";
+    failure.textContent = cleanError(error);
+    elements.configuration_list.append(failure);
+    toast(cleanError(error), "error");
+  }
+}
+
+function settingCategory(key) {
+  const root = key.split(".", 1)[0];
+  return root || "general";
+}
+
+function formatCategory(value) {
+  return value.replace(/([a-z])([A-Z])/gu, "$1 $2").replaceAll("_", " ");
+}
+
+function renderConfigurationCategories() {
+  const selected = elements.settings_category.value;
+  const categories = [...new Set(Object.keys(configuration || {}).map(settingCategory))].sort();
+  elements.settings_category.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "All categories";
+  elements.settings_category.append(all);
+  for (const category of categories) {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = formatCategory(category);
+    elements.settings_category.append(option);
+  }
+  elements.settings_category.value = categories.includes(selected) ? selected : "";
+}
+
+function configEditor(entry) {
+  const type = entry.type;
+  if (type === "boolean") {
+    const label = document.createElement("label");
+    label.className = "config-boolean";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(entry.value);
+    const text = document.createElement("span");
+    text.textContent = input.checked ? "Enabled" : "Disabled";
+    input.addEventListener("change", () => {
+      text.textContent = input.checked ? "Enabled" : "Disabled";
+    });
+    label.append(input, text);
+    label.readConfigValue = () => String(input.checked);
+    return label;
+  }
+
+  const structured = type === "array" || type === "record";
+  const input = document.createElement(structured ? "textarea" : "input");
+  input.className = "config-editor";
+  if (!structured) {
+    if (type === "number") input.type = "number";
+    else if (entry.redacted) input.type = "password";
+    else input.type = "text";
+  }
+  if (entry.redacted) {
+    input.placeholder = "Configured — enter a complete replacement value";
+    input.value = "";
+  } else if (structured) {
+    const fallback = type === "array" ? [] : {};
+    input.value = JSON.stringify(entry.value ?? fallback, null, 2);
+  } else {
+    input.value = entry.value === undefined ? "" : String(entry.value);
+  }
+  input.readConfigValue = () => {
+    if (!structured) return input.value;
+    const parsed = JSON.parse(input.value);
+    if (type === "array" && !Array.isArray(parsed)) throw new Error("Expected a JSON array.");
+    if (type === "record" && (!parsed || Array.isArray(parsed) || typeof parsed !== "object")) {
+      throw new Error("Expected a JSON object.");
+    }
+    return JSON.stringify(parsed);
+  };
+  return input;
+}
+
+async function saveConfigurationRow(row, key, editor) {
+  row.classList.add("saving");
+  row.classList.remove("error");
+  try {
+    const value = editor.readConfigValue();
+    await bridge.setConfiguration(workspace, key, value);
+    configuration = null;
+    await loadConfiguration(true);
+    toast(`${key} saved. New chats use the persistent value.`);
+  } catch (error) {
+    row.classList.remove("saving");
+    row.classList.add("error");
+    toast(cleanError(error), "error");
+  }
+}
+
+async function resetConfigurationRow(row, key) {
+  row.classList.add("saving");
+  try {
+    await bridge.resetConfiguration(workspace, key);
+    configuration = null;
+    await loadConfiguration(true);
+    toast(`${key} reset to its OMP default.`);
+  } catch (error) {
+    row.classList.remove("saving");
+    toast(cleanError(error), "error");
+  }
+}
+
+function renderConfiguration() {
+  if (!configuration) return;
+  const query = elements.settings_search.value.trim().toLowerCase();
+  const category = elements.settings_category.value;
+  const entries = Object.entries(configuration)
+    .filter(([key, entry]) => {
+      if (category && settingCategory(key) !== category) return false;
+      if (!query) return true;
+      const value = entry.redacted ? "" : JSON.stringify(entry.value ?? "");
+      return `${key} ${entry.description || ""} ${entry.type} ${value}`.toLowerCase().includes(query);
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+  elements.settings_count.textContent = `${entries.length.toLocaleString()} setting${entries.length === 1 ? "" : "s"}`;
+  elements.configuration_list.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "config-empty";
+    empty.textContent = "No settings match this filter.";
+    elements.configuration_list.append(empty);
+    return;
+  }
+
+  let lastCategory = "";
+  for (const [key, entry] of entries) {
+    const currentCategory = settingCategory(key);
+    if (currentCategory !== lastCategory) {
+      const heading = document.createElement("div");
+      heading.className = "configuration-group-heading";
+      heading.textContent = formatCategory(currentCategory);
+      elements.configuration_list.append(heading);
+      lastCategory = currentCategory;
+    }
+    const row = document.createElement("div");
+    row.className = "config-row";
+    row.dataset.key = key;
+    const copy = document.createElement("div");
+    copy.className = "config-copy";
+    const name = document.createElement("strong");
+    name.textContent = key;
+    const description = document.createElement("small");
+    description.textContent = entry.description || "No description supplied by OMP.";
+    const type = document.createElement("em");
+    type.textContent = `${entry.type}${entry.redacted ? " · credential · redacted" : ""}`;
+    copy.append(name, description, type);
+    const field = document.createElement("div");
+    field.className = "config-field";
+    const editor = configEditor(entry);
+    field.append(editor);
+    const actions = document.createElement("div");
+    actions.className = "config-actions";
+    const save = document.createElement("button");
+    save.className = "save";
+    save.textContent = "Save";
+    save.addEventListener("click", () => void saveConfigurationRow(row, key, editor));
+    const reset = document.createElement("button");
+    reset.textContent = "Reset";
+    reset.addEventListener("click", () => void resetConfigurationRow(row, key));
+    actions.append(save, reset);
+    row.append(copy, field, actions);
+    elements.configuration_list.append(row);
+  }
+}
+
+function splitRoleSelector(selector) {
+  if (typeof selector !== "string") return { model: "", effort: "" };
+  for (const effort of THINKING_LEVELS.filter(Boolean)) {
+    if (selector.endsWith(`:${effort}`)) {
+      return { model: selector.slice(0, -(effort.length + 1)), effort };
+    }
+  }
+  return { model: selector, effort: "" };
+}
+
+function ensureModelDatalist(session) {
+  let datalist = document.querySelector("#settings-model-options");
+  if (!datalist) {
+    datalist = document.createElement("datalist");
+    datalist.id = "settings-model-options";
+    elements.settings_backdrop.append(datalist);
+  }
+  datalist.replaceChildren();
+  for (const model of session?.models || []) {
+    const option = document.createElement("option");
+    option.value = `${model.provider}/${model.id}`;
+    option.label = model.name || model.id;
+    datalist.append(option);
+  }
+}
+
+async function saveModelRole(role, model, effort, row) {
+  row.classList.add("saving");
+  try {
+    const roles = { ...(configuration?.modelRoles?.value || {}) };
+    if (model) roles[role] = `${model}${effort ? `:${effort}` : ""}`;
+    else delete roles[role];
+    await bridge.setConfiguration(workspace, "modelRoles", JSON.stringify(roles));
+    configuration = null;
+    await loadConfiguration(true);
+    toast(`${role} model role updated.`);
+  } catch (error) {
+    row.classList.remove("saving");
+    toast(cleanError(error), "error");
+  }
+}
+
+function fillModelSelect(select, session) {
+  const current = session?.state?.model;
+  select.replaceChildren();
+  for (const model of session?.models || []) {
+    const option = document.createElement("option");
+    option.value = `${model.provider}\u0000${model.id}`;
+    option.textContent = `${model.name || model.id} · ${model.provider}`;
+    select.append(option);
+  }
+  select.disabled = !session?.models?.length;
+  if (current) select.value = `${current.provider}\u0000${current.id}`;
+}
+
+function renderSettingsModels() {
+  const session = activeSession();
+  fillModelSelect(elements.settings_active_model, session);
+  elements.settings_active_thinking.disabled = !session;
+  elements.settings_active_thinking.value = session?.state?.thinkingLevel || "off";
+  ensureModelDatalist(session);
+  elements.role_model_list.replaceChildren();
+  const configuredRoles = configuration?.modelRoles?.value || {};
+  for (const role of MODEL_ROLES) {
+    const row = document.createElement("div");
+    row.className = "role-model-row";
+    const label = document.createElement("div");
+    label.className = "role-label";
+    const name = document.createElement("strong");
+    name.textContent = role.name;
+    const description = document.createElement("small");
+    description.textContent = `@${role.id} · ${role.description}`;
+    label.append(name, description);
+    const selector = splitRoleSelector(configuredRoles[role.id]);
+    const model = document.createElement("input");
+    model.className = "config-editor";
+    model.setAttribute("list", "settings-model-options");
+    model.placeholder = "Use OMP fallback";
+    model.value = selector.model;
+    const effort = document.createElement("select");
+    for (const level of THINKING_LEVELS) {
+      const option = document.createElement("option");
+      option.value = level;
+      option.textContent = level || "Model default";
+      effort.append(option);
+    }
+    effort.value = selector.effort;
+    const clear = document.createElement("button");
+    clear.textContent = "Clear";
+    clear.addEventListener("click", () => void saveModelRole(role.id, "", "", row));
+    model.addEventListener("change", () => void saveModelRole(role.id, model.value.trim(), effort.value, row));
+    effort.addEventListener("change", () => void saveModelRole(role.id, model.value.trim(), effort.value, row));
+    row.append(label, model, effort, clear);
+    elements.role_model_list.append(row);
+  }
+}
+
+function renderSettingsRuntime() {
+  const session = activeSession();
+  const state = session?.state;
+  elements.settings_steering.disabled = !state;
+  elements.settings_follow_up.disabled = !state;
+  elements.settings_interrupt.disabled = !state;
+  if (state) {
+    elements.settings_steering.value = state.steeringMode;
+    elements.settings_follow_up.value = state.followUpMode;
+    elements.settings_interrupt.value = state.interruptMode;
+  }
+  elements.settings_fast_mode.disabled = !state;
+  elements.settings_auto_compaction.disabled = !state;
+  elements.settings_fast_mode.classList.toggle("active", Boolean(state?.fastModeEnabled));
+  elements.settings_auto_compaction.classList.toggle("active", Boolean(state?.autoCompactionEnabled));
+}
+
+async function applyRuntimeMode(type, property, value) {
+  const session = activeSession();
+  if (!session) return;
+  try {
+    await rpc(session, { type, mode: value });
+    session.state[property] = value;
+    renderSettingsRuntime();
+  } catch (error) {
+    toast(cleanError(error), "error");
+    renderSettingsRuntime();
+  }
+}
+
+async function toggleAutoCompaction() {
+  const session = activeSession();
+  if (!session) return;
+  try {
+    const enabled = !session.state?.autoCompactionEnabled;
+    await rpc(session, { type: "set_auto_compaction", enabled });
+    session.state.autoCompactionEnabled = enabled;
+    renderSettingsRuntime();
   } catch (error) {
     toast(cleanError(error), "error");
   }
@@ -1262,6 +1656,7 @@ function handleAppCommand(command) {
   if (command === "new-chat") void startChat();
   else if (command === "open-workspace") void chooseWorkspace();
   else if (command === "command-palette") openPalette();
+  else if (command === "open-settings") void openSettings();
   else if (command === "focus-composer") elements.message_input.focus();
   else if (command === "abort") void abortGeneration();
 }
@@ -1312,6 +1707,57 @@ elements.abort_generation.addEventListener("click", () => void abortGeneration()
 elements.model_select.addEventListener("change", () => void setModel());
 elements.thinking_select.addEventListener("change", () => void setThinking());
 elements.fast_toggle.addEventListener("click", () => void toggleFast());
+elements.open_settings.addEventListener("click", () => void openSettings());
+elements.settings_close.addEventListener("click", closeSettings);
+elements.settings_backdrop.addEventListener("click", (event) => {
+  if (event.target === elements.settings_backdrop) closeSettings();
+});
+document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+  button.addEventListener("click", () => showSettingsTab(button.dataset.settingsTab));
+});
+elements.settings_open_folder.addEventListener("click", () => {
+  void bridge.openConfigurationFolder(workspace).catch((error) => toast(cleanError(error), "error"));
+});
+elements.settings_reload.addEventListener("click", () => {
+  configuration = null;
+  void loadConfiguration(true);
+});
+elements.settings_search.addEventListener("input", renderConfiguration);
+elements.settings_category.addEventListener("change", renderConfiguration);
+elements.settings_active_model.addEventListener("change", () => {
+  elements.model_select.value = elements.settings_active_model.value;
+  void setModel();
+});
+elements.settings_active_thinking.addEventListener("change", () => {
+  elements.thinking_select.value = elements.settings_active_thinking.value;
+  void setThinking();
+});
+elements.roles_reset.addEventListener("click", async () => {
+  try {
+    await bridge.resetConfiguration(workspace, "modelRoles");
+    configuration = null;
+    await loadConfiguration(true);
+    toast("Model roles reset to OMP defaults.");
+  } catch (error) {
+    toast(cleanError(error), "error");
+  }
+});
+elements.settings_steering.addEventListener("change", () => {
+  void applyRuntimeMode("set_steering_mode", "steeringMode", elements.settings_steering.value);
+});
+elements.settings_follow_up.addEventListener("change", () => {
+  void applyRuntimeMode("set_follow_up_mode", "followUpMode", elements.settings_follow_up.value);
+});
+elements.settings_interrupt.addEventListener("change", () => {
+  void applyRuntimeMode("set_interrupt_mode", "interruptMode", elements.settings_interrupt.value);
+});
+elements.settings_fast_mode.addEventListener("click", () => void toggleFast());
+elements.settings_auto_compaction.addEventListener("click", () => void toggleAutoCompaction());
+elements.settings_compact_now.addEventListener("click", () => void compactContext());
+elements.settings_new_chat.addEventListener("click", () => {
+  closeSettings();
+  void startChat();
+});
 elements.launch_args.addEventListener("change", () => {
   localStorage.setItem("ompDesktop.launchArgs", elements.launch_args.value.trim());
 });

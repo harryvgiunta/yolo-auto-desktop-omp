@@ -41,6 +41,7 @@ Desktop additions:
 - streaming Markdown chat with reasoning and expandable tool-activity cards;
 - searchable slash-command palette plus one-click resume, compact, review, tools, usage, and MCP widgets;
 - model, thinking-level, fast-mode, context, todo-plan, extension-widget, and subagent controls;
+- complete settings GUI backed by `omp config list --json`, with typed editors, validation, reset controls, active-model switching, all ten model roles, and live runtime queue/compaction options;
 - workspace picker, image attachments, session resume, and multiple concurrent chats;
 - protocol-v2 chunk reassembly and extension input dialogs over a sandboxed IPC bridge;
 - checksum-verified OMP runtimes for Windows, macOS, and Linux;
