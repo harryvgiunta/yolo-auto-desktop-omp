@@ -17,8 +17,8 @@ const elements = Object.fromEntries(
     "settings-backdrop", "settings-category", "settings-close", "settings-compact-now", "settings-count",
     "settings-fast-mode", "settings-follow-up", "settings-interrupt", "settings-new-chat", "settings-open-folder",
     "settings-path", "settings-reload", "settings-search", "settings-steering", "show-commands", "thinking-select",
-    "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title", "workspace-name",
-    "workspace-path", "configuration-list",
+    "throughput-value", "todo-count", "todo-empty", "todo-list", "toast-region", "welcome", "window-title",
+    "workspace-name", "workspace-path", "configuration-list",
   ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]),
 );
 
@@ -258,6 +258,21 @@ function updateAssistant(session, wireMessage, streaming) {
   if (!streaming) {
     session.activeAssistantId = null;
   }
+  const outputTokens = wireMessage?.usage?.output;
+  const durationMs =
+    typeof wireMessage?.duration === "number" && wireMessage.duration > 0
+      ? wireMessage.duration
+      : Date.now() - Number(wireMessage?.timestamp || Date.now());
+  if (
+    session.state &&
+    Number.isFinite(outputTokens) &&
+    outputTokens > 0 &&
+    Number.isFinite(durationMs) &&
+    durationMs >= 100
+  ) {
+    session.state.tokensPerSecond = (outputTokens * 1000) / durationMs;
+    renderThroughput(session);
+  }
   scheduleMessages(session);
 }
 
@@ -357,7 +372,11 @@ function handleFrame(session, frame) {
       break;
     case "agent_start":
       session.status = "streaming";
-      if (session.state) session.state.isStreaming = true;
+      if (session.state) {
+        session.state.isStreaming = true;
+        session.state.tokensPerSecond = null;
+      }
+      renderThroughput(session);
       renderState(session);
       renderChatList();
       updateChrome();
@@ -658,6 +677,14 @@ function renderChatList() {
   }
   elements.chat_count.textContent = String(sessions.size);
 }
+function renderThroughput(session) {
+  if (!session || session.id !== activeSessionId) return;
+  const value = session.state?.tokensPerSecond;
+  const available = typeof value === "number" && Number.isFinite(value) && value > 0;
+  elements.throughput_value.textContent = available ? `${value.toFixed(1)} tok/s` : "— tok/s";
+  elements.throughput_value.classList.toggle("active", available);
+}
+
 
 function renderState(session) {
   if (!session || session.id !== activeSessionId) return;
@@ -668,6 +695,7 @@ function renderState(session) {
   elements.context_fill.style.width = `${percent}%`;
   elements.context_tokens.textContent = `${Number(usage.tokens || 0).toLocaleString()} tokens`;
   elements.context_window.textContent = usage.contextWindow ? `${Number(usage.contextWindow).toLocaleString()} window` : "— window";
+  renderThroughput(session);
   elements.fast_toggle.classList.toggle("active", Boolean(state.fastModeEnabled));
   elements.fast_toggle.disabled = session.status === "connecting";
   elements.thinking_select.disabled = session.status === "connecting";
@@ -819,6 +847,8 @@ function updateChrome() {
     elements.context_fill.style.width = "0%";
     elements.context_tokens.textContent = "0 tokens";
     elements.context_window.textContent = "— window";
+    elements.throughput_value.textContent = "— tok/s";
+    elements.throughput_value.classList.remove("active");
     elements.extension_section.hidden = true;
     return;
   }

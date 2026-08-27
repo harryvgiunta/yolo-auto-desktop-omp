@@ -205,6 +205,8 @@ kbd { padding: 2px 4px; border: 1px solid #303a46; border-radius: 4px; backgroun
 .context-track { height: 3px; overflow: hidden; border-radius: 1px; background: #1c242e; }
 .context-track > div { width: 0; height: 100%; background: linear-gradient(90deg, var(--accent), var(--cyan)); transition: width 200ms ease; }
 .context-stats { display: flex; justify-content: space-between; margin-top: 7px; color: #566271; font-size: 8px; }
+.throughput-value { color: #6d7a88; font-variant-numeric: tabular-nums; font-weight: 650; }
+.throughput-value.active { color: var(--cyan); }
 .quick-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
 .quick-grid button { display: flex; height: 31px; align-items: center; justify-content: flex-start; flex-direction: row; gap: 7px; padding: 0; border: 0; border-bottom: 1px solid #1d2630; border-radius: 0; background: transparent; color: #7d8a99; cursor: pointer; }
 .quick-grid button:hover:not(:disabled) { color: var(--accent); }
